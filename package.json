@@ -1,0 +1,138 @@
+{
+  "name": "pi-for-vscode",
+  "displayName": "Pi for VS Code",
+  "description": "A webview interface for Pi Coding Agent in VS Code.",
+  "version": "0.0.1",
+  "publisher": "fujigraphics",
+  "license": "Apache-2.0",
+  "icon": "media/icon.png",
+  "main": "./out/extension.js",
+  "engines": {
+    "vscode": "^1.94.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "pi",
+    "coding-agent",
+    "agent",
+    "ai",
+    "chat",
+    "webview"
+  ],
+  "activationEvents": [
+    "onView:pi-for-vscode.chat",
+    "onCommand:pi-for-vscode.open",
+    "onCommand:pi-for-vscode.newSession",
+    "onCommand:pi-for-vscode.stop"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "pi-for-vscode.open",
+        "title": "Pi for VS Code: Open",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "pi-for-vscode.newSession",
+        "title": "Pi for VS Code: New Session",
+        "icon": "$(add)"
+      },
+      {
+        "command": "pi-for-vscode.stop",
+        "title": "Pi for VS Code: Stop",
+        "icon": "$(debug-stop)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pi-for-vscode",
+          "title": "Pi",
+          "icon": "media/pi.svg"
+        }
+      ]
+    },
+    "views": {
+      "pi-for-vscode": [
+        {
+          "type": "webview",
+          "id": "pi-for-vscode.chat",
+          "name": "Pi"
+        }
+      ]
+    },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "pi-for-vscode.open",
+          "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "pi-for-vscode.newSession",
+          "when": "view == pi-for-vscode.chat",
+          "group": "navigation"
+        },
+        {
+          "command": "pi-for-vscode.stop",
+          "when": "view == pi-for-vscode.chat",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Pi for VS Code",
+      "properties": {
+        "pi-for-vscode.piPath": {
+          "type": "string",
+          "default": "pi",
+          "description": "Path to the pi CLI executable."
+        },
+        "pi-for-vscode.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra CLI arguments passed to pi after --mode rpc."
+        },
+        "pi-for-vscode.persistSessions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Persist Pi sessions using Pi's normal session storage. Disable to pass --no-session."
+        },
+        "pi-for-vscode.defaultStreamingBehavior": {
+          "type": "string",
+          "enum": [
+            "followUp",
+            "steer"
+          ],
+          "default": "followUp",
+          "description": "How prompts sent while Pi is already running should be queued."
+        },
+        "pi-for-vscode.openOnStartup": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open the Pi sidebar when VS Code starts."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "tsc -p ./ --noEmit",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/vscode": "^1.94.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.6.0"
+  }
+}
