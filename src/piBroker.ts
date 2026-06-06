@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { PI_NO_RESTART_COMMANDS } from "./protocol";
 
 interface BrokerConfig {
   socketPath: string;
@@ -225,6 +226,14 @@ function handleClientLine(socket: net.Socket, line: string): void {
     return;
   }
 
+  // Transport keepalive: the client heartbeats with `ping` to detect a dead /
+  // half-open socket (e.g. after the laptop sleeps). The broker answers directly
+  // and never forwards it to pi, so it neither wakes nor restarts the agent.
+  if (command.type === "ping") {
+    socket.write(`${JSON.stringify({ type: "response", id: command.id, command: "ping", success: true })}\n`);
+    return;
+  }
+
   if (command.type === "broker_shutdown") {
     socket.write(`${JSON.stringify({ type: "response", id: command.id, command: "broker_shutdown", success: true })}\n`);
     void shutdown(0);
@@ -250,8 +259,7 @@ function handleClientLine(socket: net.Socket, line: string): void {
   // get_state and abort must not restart Pi — restarting on get_state creates a
   // loop where postState() after agent_end respawns Pi, which auto-resumes the
   // interrupted session and hits the same provider error (e.g. usage limit) again.
-  const noRestartTypes = new Set(["get_state", "abort"]);
-  if (!noRestartTypes.has(String(command.type))) startPi();
+  if (!PI_NO_RESTART_COMMANDS.has(String(command.type))) startPi();
 
   const proc = piProcess;
   if (!proc || proc.stdin.destroyed) {

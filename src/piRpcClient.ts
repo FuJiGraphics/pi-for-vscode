@@ -10,6 +10,17 @@ import type { PiRpcMessage } from "./protocol";
 
 export type { PiRpcMessage } from "./protocol";
 
+// Transport keepalive / recovery tuning. The host↔broker link is a local UNIX
+// socket (or named pipe) with no built-in idle timeout, so a half-open socket
+// after the laptop sleeps stays "connected" until we probe it. The heartbeat
+// detects that within ~one interval; reconnect reattaches to the still-running
+// detached broker (or relaunches it) with capped exponential backoff + jitter.
+const HEARTBEAT_INTERVAL_MS = 20_000;
+const HEARTBEAT_TIMEOUT_MS = 4_000;
+const MAX_RECONNECT_ATTEMPTS = 6;
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_CAP_MS = 10_000;
+
 export interface PiRpcClientOptions {
   piPath: string;
   /** "executable": spawn piPath directly. "node-script": spawn nodePath with piPath. */
@@ -28,6 +39,12 @@ export interface PiRpcClientOptions {
   brokerScriptPath: string;
   brokerStoragePath: string;
   brokerIdleTimeoutMs: number;
+  /**
+   * Distinguishes multiple concurrent runtimes for the same workspace/config so
+   * each running session gets its OWN broker + pi process. Folded into the broker
+   * identity hash. Omitted (undefined) reproduces the legacy single cwd-hash broker.
+   */
+  instanceId?: string;
 }
 
 interface PendingRequest {
@@ -48,21 +65,34 @@ export class PiRpcClient implements vscode.Disposable {
   private brokerId?: string;
   private brokerSocketPath?: string;
   private brokerLogPath?: string;
+  private heartbeatTimer?: NodeJS.Timeout;
+  private reconnectTimer?: NodeJS.Timeout;
+  private reconnectAttempts = 0;
+  private reconnecting = false;
 
   private readonly eventEmitter = new vscode.EventEmitter<PiRpcMessage>();
   private readonly stderrEmitter = new vscode.EventEmitter<string>();
   private readonly closeEmitter = new vscode.EventEmitter<{ code: number | null; signal: NodeJS.Signals | null }>();
   private readonly errorEmitter = new vscode.EventEmitter<Error>();
+  private readonly reconnectingEmitter = new vscode.EventEmitter<void>();
+  private readonly reconnectedEmitter = new vscode.EventEmitter<void>();
 
   readonly onEvent = this.eventEmitter.event;
   readonly onStderr = this.stderrEmitter.event;
+  /** Terminal close: pi process died, or transport reconnection was exhausted. */
   readonly onClose = this.closeEmitter.event;
   readonly onError = this.errorEmitter.event;
+  /** A transport drop was detected; auto-reconnect has started. */
+  readonly onReconnecting = this.reconnectingEmitter.event;
+  /** The socket was re-attached after a drop; callers should resync state. */
+  readonly onReconnected = this.reconnectedEmitter.event;
 
   constructor(private readonly options: PiRpcClientOptions) {}
 
   get isStarted(): boolean {
-    return this.connected || this.starting !== undefined;
+    // `reconnecting` keeps this true through the backoff window so callers don't
+    // tear down and recreate a client that is already recovering itself.
+    return this.connected || this.starting !== undefined || this.reconnecting;
   }
 
   start(): void {
@@ -98,8 +128,47 @@ export class PiRpcClient implements vscode.Disposable {
     });
   }
 
+  /**
+   * Immediately verify the link is alive (used on wake / view-visible). Sends a
+   * heartbeat now; if it fails, the heartbeat path tears down the dead socket and
+   * begins reconnecting. Cheap no-op when already disconnected/reconnecting.
+   */
+  probe(): void {
+    if (this.disposed) return;
+    if (!this.connected || !this.socket || this.socket.destroyed) {
+      this.beginReconnect();
+      return;
+    }
+    void this.sendHeartbeat();
+  }
+
+  /**
+   * Best-effort teardown that first asks the detached broker to shut down, so it
+   * doesn't outlive the extension host with an orphaned pi (matches Claude Code:
+   * the process dies on reload, the transcript on disk is the resume source). The
+   * shutdown line is written synchronously into the socket buffer before we tear
+   * down; if it doesn't land, the broker's idle timeout reaps the pi as a backstop.
+   */
+  disposeAndShutdownBroker(): void {
+    const socket = this.socket;
+    if (socket && !socket.destroyed && this.connected) {
+      try {
+        socket.write(`${JSON.stringify({ type: "broker_shutdown" })}\n`);
+      } catch {
+        // best-effort; idle timeout backstops
+      }
+    }
+    this.dispose();
+  }
+
   dispose(): void {
     this.disposed = true;
+    this.stopHeartbeat();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    this.reconnecting = false;
     this.rejectAll(new Error("pi RPC client disposed"));
     this.socket?.destroy();
     this.socket = undefined;
@@ -108,6 +177,8 @@ export class PiRpcClient implements vscode.Disposable {
     this.stderrEmitter.dispose();
     this.closeEmitter.dispose();
     this.errorEmitter.dispose();
+    this.reconnectingEmitter.dispose();
+    this.reconnectedEmitter.dispose();
   }
 
   private async sendAsync(command: PiRpcMessage): Promise<void> {
@@ -206,22 +277,101 @@ export class PiRpcClient implements vscode.Disposable {
     this.connected = true;
     this.buffer = "";
     this.decoder = new StringDecoder("utf8");
+    this.startHeartbeat();
 
     socket.on("data", (chunk: Buffer) => this.handleSocketData(chunk));
     socket.on("error", (error) => {
       if (this.disposed) return;
+      // A transport error is a transient drop, not a user-facing failure — fail any
+      // in-flight requests but stay quiet; the trailing "close" drives reconnect and
+      // the banner. (broker_error / parse / start errors still surface via onError.)
       this.rejectAll(error instanceof Error ? error : new Error(String(error)));
-      this.errorEmitter.fire(error instanceof Error ? error : new Error(String(error)));
     });
     socket.on("close", () => {
       if (this.socket !== socket) return;
-      this.socket = undefined;
-      this.connected = false;
-      this.buffer = "";
+      this.resetConnection();
       if (this.disposed) return;
       this.rejectAll(new Error("Pi background broker connection closed"));
-      this.closeEmitter.fire({ code: null, signal: null });
+      // A dropped socket (sleep/half-open/broker restart) is recoverable: reattach
+      // to the running broker instead of surfacing a terminal close right away.
+      this.beginReconnect();
     });
+  }
+
+  // ---- transport keepalive + auto-reconnect ----------------------------------
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => void this.sendHeartbeat(), HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer.unref?.();
+  }
+
+  private stopHeartbeat(): void {
+    if (!this.heartbeatTimer) return;
+    clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = undefined;
+  }
+
+  // Drop the current socket's bookkeeping (not the socket object itself — callers
+  // capture/destroy it as needed). Shared by the "close" handler and the heartbeat
+  // failure path so the two stay in lockstep.
+  private resetConnection(): void {
+    this.socket = undefined;
+    this.connected = false;
+    this.buffer = "";
+    this.stopHeartbeat();
+  }
+
+  private async sendHeartbeat(): Promise<void> {
+    if (this.disposed || !this.connected || !this.socket || this.socket.destroyed) return;
+    try {
+      await this.request({ type: "ping" }, HEARTBEAT_TIMEOUT_MS);
+    } catch {
+      if (this.disposed) return;
+      // No pong within the window → the socket is dead/half-open. Capture it first
+      // so resetConnection() leaves the "close" handler inert, then destroy + reconnect.
+      const dead = this.socket;
+      this.resetConnection();
+      dead?.destroy();
+      this.rejectAll(new Error("Pi heartbeat timed out"));
+      this.beginReconnect();
+    }
+  }
+
+  private beginReconnect(): void {
+    if (this.disposed || this.reconnecting) return;
+    this.reconnecting = true;
+    this.reconnectAttempts = 0;
+    this.reconnectingEmitter.fire();
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.disposed) return;
+    const attempt = this.reconnectAttempts++;
+    if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+      this.reconnecting = false;
+      this.closeEmitter.fire({ code: null, signal: null });
+      return;
+    }
+    const backoff = Math.min(RECONNECT_CAP_MS, RECONNECT_BASE_MS * 2 ** attempt);
+    const delayMs = backoff + Math.floor(Math.random() * 250);
+    this.reconnectTimer = setTimeout(() => void this.attemptReconnect(), delayMs);
+    this.reconnectTimer.unref?.();
+  }
+
+  private async attemptReconnect(): Promise<void> {
+    if (this.disposed) return;
+    try {
+      // ensureStarted dedupes with any concurrent user-triggered send and reuses
+      // connectToBroker (reattach to the live broker, else relaunch one).
+      await this.ensureStarted();
+      this.reconnecting = false;
+      this.reconnectAttempts = 0;
+      this.reconnectedEmitter.fire();
+    } catch {
+      this.scheduleReconnect();
+    }
   }
 
   private launchBroker(socketPath: string): void {
@@ -312,6 +462,8 @@ export class PiRpcClient implements vscode.Disposable {
         clearTimeout(pending.timeout);
         pending.resolve(message);
       }
+      // Heartbeat acks are pure transport noise — don't surface them as events.
+      if (message.command === "ping") return;
     }
 
     this.eventEmitter.fire(message);
@@ -336,6 +488,9 @@ export class PiRpcClient implements vscode.Disposable {
           cwd: this.options.cwd ?? "",
           persistSessions: this.options.persistSessions,
           extraArgs: this.options.extraArgs,
+          // Last key on purpose: undefined is dropped by JSON.stringify, so a client
+          // with no instanceId hashes byte-identically to the legacy single-broker id.
+          instanceId: this.options.instanceId,
         }))
         .digest("hex")
         .slice(0, 24);

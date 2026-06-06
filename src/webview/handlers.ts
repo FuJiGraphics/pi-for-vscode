@@ -39,6 +39,13 @@ function formatTurnError(raw: unknown): string {
   return text || "The model returned an error.";
 }
 
+// A turn whose error text matches this is almost certainly a transient transport
+// drop (e.g. the laptop slept and pi's provider socket idled out), not a real
+// model/auth failure — so we soften it and let the connection banner own recovery.
+// This sniffs pi's *formatted* message because pi exposes no structured transport
+// flag; widen the list if pi rewords these errors.
+const TRANSIENT_DISCONNECT_RE = /idle timeout|websocket|connection|disconnect|econnreset|timed out/i;
+
 export function handleRpcEvent(event: any): void {
   switch (event.type) {
     case "agent_start":
@@ -58,9 +65,19 @@ export function handleRpcEvent(event: any): void {
       const message = event.message;
       if (message && message.role === "assistant") {
         // A turn can end in an error (e.g. provider/model/auth rejection) with no
-        // content. Surface it instead of silently showing nothing.
+        // content. Surface it instead of silently showing nothing. A transient
+        // transport drop (sleep idle-timeout) is softened — the connection banner
+        // owns the recovery story — and either way clear `running` here so the
+        // spinner can't stick if the trailing agent_end was lost on a dead socket.
         if (message.errorMessage) {
-          addMessage("system", formatTurnError(message.errorMessage), { error: true });
+          const text = formatTurnError(message.errorMessage);
+          const transient = TRANSIENT_DISCONNECT_RE.test(text);
+          addMessage(
+            "system",
+            transient ? `Connection dropped, so this turn was interrupted — you can continue once it reconnects. (${text})` : text,
+            { error: !transient },
+          );
+          setRunning(false);
           break;
         }
         const text = textFromContent(message.content);
@@ -71,6 +88,7 @@ export function handleRpcEvent(event: any): void {
           scheduleRender();
         } else if (message.stopReason === "error") {
           addMessage("system", "The model ended the turn with an error and no response.", { error: true });
+          setRunning(false);
         }
       }
       break;
