@@ -1,7 +1,20 @@
 .vscode/**
 src/**
+scripts/**
+dist/**
 node_modules/**
 .gitignore
 .git/**
 tsconfig.json
+esbuild.js
 **/*.map
+
+# Internal dev-only guidance — never shipped. The extension is a thin wrapper; Pi's
+# prompt/skills/config come from the pi binary, not from these files. They are only read
+# by agents working ON this repo (Claude Code skills, AGENTS.md/docs conventions).
+.claude/**
+AGENTS.md
+CLAUDE.md
+docs/**
+
+# The bundled pi tarball (resources/pi-bundle.tar.gz) is intentionally shipped.

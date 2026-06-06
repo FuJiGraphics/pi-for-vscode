@@ -1,0 +1,179 @@
+// Translates inbound pi RPC events and extension UI requests into conversation
+// state changes. Event payloads are loosely typed (PiRpcMessage), so each
+// handler reads the fields it expects defensively.
+import { state } from "./state";
+import { scheduleRender } from "./render";
+import {
+  addMessage,
+  appendAssistant,
+  ensureActivity,
+  ensureAssistant,
+  prettifyToolName,
+  recordActivity,
+  setRunning,
+  summarizeArgs,
+  textFromContent,
+} from "./conversation";
+import { inputEl } from "./dom";
+import { post } from "./bridge";
+import { ensureAnimating } from "./animator";
+import { autoResizeInput, updateInputState } from "./input";
+
+// pi wraps provider failures like: `Codex error: {"type":"error","status":400,
+// "error":{"message":"..."}}`. Pull out the human-readable message when present.
+function formatTurnError(raw: unknown): string {
+  const text = String(raw ?? "").trim();
+  const braceAt = text.indexOf("{");
+  if (braceAt !== -1) {
+    try {
+      const parsed = JSON.parse(text.slice(braceAt)) as { message?: unknown; error?: { message?: unknown } };
+      const inner = parsed?.error?.message ?? parsed?.message;
+      if (typeof inner === "string" && inner) {
+        const prefix = text.slice(0, braceAt).replace(/[:\s]+$/, "").trim();
+        return prefix ? `${prefix}: ${inner}` : inner;
+      }
+    } catch {
+      // Not JSON — fall through to the raw text.
+    }
+  }
+  return text || "The model returned an error.";
+}
+
+export function handleRpcEvent(event: any): void {
+  switch (event.type) {
+    case "agent_start":
+      setRunning(true);
+      break;
+    case "agent_end":
+      setRunning(false);
+      break;
+    case "message_update": {
+      if (!state.running) break;
+      const delta = event.assistantMessageEvent;
+      if (delta && delta.type === "text_delta" && delta.delta) appendAssistant(delta.delta);
+      break;
+    }
+    case "message_end": {
+      if (!state.running) break;
+      const message = event.message;
+      if (message && message.role === "assistant") {
+        // A turn can end in an error (e.g. provider/model/auth rejection) with no
+        // content. Surface it instead of silently showing nothing.
+        if (message.errorMessage) {
+          addMessage("system", formatTurnError(message.errorMessage), { error: true });
+          break;
+        }
+        const text = textFromContent(message.content);
+        if (text) {
+          const current = ensureAssistant();
+          current.text = text;
+          ensureAnimating();
+          scheduleRender();
+        } else if (message.stopReason === "error") {
+          addMessage("system", "The model ended the turn with an error and no response.", { error: true });
+        }
+      }
+      break;
+    }
+    case "tool_execution_start":
+      if (!state.running) break;
+      recordActivity(event.toolCallId, prettifyToolName(event.toolName), summarizeArgs(event.args), "running");
+      break;
+    case "tool_execution_update":
+      if (!state.running) break;
+      recordActivity(event.toolCallId, prettifyToolName(event.toolName), "", "running");
+      break;
+    case "tool_execution_end":
+      if (!state.running) break;
+      recordActivity(event.toolCallId, prettifyToolName(event.toolName), "", event.isError ? "error" : "done");
+      if (event.isError) {
+        const activity = ensureActivity();
+        activity.expanded = true;
+      }
+      break;
+    case "queue_update":
+      state.status = "Queued: " + ((event.steering || []).length + (event.followUp || []).length) + " follow-up";
+      scheduleRender();
+      break;
+    case "compaction_start":
+      recordActivity("compaction", "Compacting context", event.reason || "", "running");
+      break;
+    case "compaction_end":
+      recordActivity(
+        "compaction",
+        event.errorMessage ? "Compaction failed" : "Compaction finished",
+        event.errorMessage || "",
+        event.errorMessage ? "error" : "done",
+      );
+      break;
+    case "extension_error":
+      addMessage("system", "Extension error: " + (event.error || "unknown"), { error: true });
+      break;
+  }
+}
+
+export function handleExtensionUiRequest(request: any): void {
+  const method = request.method;
+  if (method === "notify") {
+    addMessage("system", request.message || "Notification", { error: request.notifyType === "error" });
+    return;
+  }
+  if (method === "setStatus") {
+    state.status = request.statusText || (state.running ? "Pi is working" : "");
+    scheduleRender();
+    return;
+  }
+  if (method === "setTitle") return;
+  if (method === "setWidget") {
+    if (request.widgetLines) recordActivity("widget", "Status", request.widgetLines.join(String.fromCharCode(10)), "running");
+    return;
+  }
+  if (method === "set_editor_text") {
+    inputEl.value = request.text || "";
+    autoResizeInput();
+    updateInputState();
+    inputEl.focus();
+    return;
+  }
+
+  if (method === "confirm") {
+    const text = [request.title || "Approval requested", request.message || ""]
+      .filter(Boolean)
+      .join(String.fromCharCode(10) + String.fromCharCode(10));
+    addMessage("system", text, { ui: { kind: "confirm", requestId: request.id } });
+    return;
+  }
+
+  const response: Record<string, unknown> = { type: "extension_ui_response", id: request.id };
+  if (method === "input") {
+    const value = window.prompt(request.title || "Input", request.placeholder || "");
+    if (value === null) response.cancelled = true;
+    else response.value = value;
+  } else if (method === "editor") {
+    const value = window.prompt(request.title || "Editor", request.prefill || "");
+    if (value === null) response.cancelled = true;
+    else response.value = value;
+  } else if (method === "select") {
+    const options: string[] = request.options || [];
+    const newline = String.fromCharCode(10);
+    const value = window.prompt(
+      (request.title || "Select") + newline + newline + options.map((option, index) => index + 1 + ". " + option).join(newline),
+    );
+    const index = Number(value) - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= options.length) response.cancelled = true;
+    else response.value = options[index];
+  } else {
+    response.cancelled = true;
+  }
+  post({ type: "extensionUiResponse", response });
+}
+
+export function handleStderr(text: string): void {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return;
+  if (/error|failed|exception|traceback/i.test(trimmed)) {
+    addMessage("system", trimmed, { error: true, pre: trimmed.length > 240 });
+  } else if (state.running) {
+    recordActivity("stderr-" + trimmed.slice(0, 24), "Pi status", trimmed.slice(0, 120), "running");
+  }
+}

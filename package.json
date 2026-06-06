@@ -23,10 +23,13 @@
     "webview"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onView:pi-for-vscode.chat",
     "onCommand:pi-for-vscode.open",
     "onCommand:pi-for-vscode.newSession",
-    "onCommand:pi-for-vscode.stop"
+    "onCommand:pi-for-vscode.sessions",
+    "onCommand:pi-for-vscode.stop",
+    "onCommand:pi-for-vscode.repairAgent"
   ],
   "contributes": {
     "commands": [
@@ -41,13 +44,23 @@
         "icon": "$(add)"
       },
       {
+        "command": "pi-for-vscode.sessions",
+        "title": "Pi for VS Code: Sessions",
+        "icon": "$(history)"
+      },
+      {
         "command": "pi-for-vscode.stop",
         "title": "Pi for VS Code: Stop",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "pi-for-vscode.repairAgent",
+        "title": "Pi for VS Code: Reinstall/Repair Bundled Pi Agent",
+        "icon": "$(cloud-download)"
       }
     ],
     "viewsContainers": {
-      "activitybar": [
+      "secondarySidebar": [
         {
           "id": "pi-for-vscode",
           "title": "Pi",
@@ -60,7 +73,9 @@
         {
           "type": "webview",
           "id": "pi-for-vscode.chat",
-          "name": "Pi"
+          "name": "Pi",
+          "icon": "media/pi.svg",
+          "visibility": "visible"
         }
       ]
     },
@@ -68,18 +83,6 @@
       "editor/title": [
         {
           "command": "pi-for-vscode.open",
-          "group": "navigation"
-        }
-      ],
-      "view/title": [
-        {
-          "command": "pi-for-vscode.newSession",
-          "when": "view == pi-for-vscode.chat",
-          "group": "navigation"
-        },
-        {
-          "command": "pi-for-vscode.stop",
-          "when": "view == pi-for-vscode.chat",
           "group": "navigation"
         }
       ]
@@ -90,7 +93,22 @@
         "pi-for-vscode.piPath": {
           "type": "string",
           "default": "pi",
-          "description": "Path to the pi CLI executable."
+          "description": "Path to the pi CLI executable. Leave as \"pi\" to auto-detect on PATH; set an absolute path to force a specific install."
+        },
+        "pi-for-vscode.useBundledPi": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "enumDescriptions": [
+            "Use the pi found via piPath/PATH if present; otherwise fall back to the bundled agent.",
+            "Always use the bundled agent, ignoring any pi on PATH.",
+            "Never use the bundled agent; require pi on PATH or via piPath."
+          ],
+          "default": "auto",
+          "description": "Controls when the agent bundled with this extension is used."
         },
         "pi-for-vscode.extraArgs": {
           "type": "array",
@@ -116,23 +134,35 @@
         },
         "pi-for-vscode.openOnStartup": {
           "type": "boolean",
-          "default": false,
-          "description": "Open the Pi sidebar when VS Code starts."
+          "default": true,
+          "description": "Open the Pi webview in the Secondary Side Bar when VS Code starts."
+        },
+        "pi-for-vscode.brokerIdleTimeoutMinutes": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "description": "Minutes the detached Pi background broker stays alive after VS Code disconnects. Set to 0 to stop immediately when idle."
         }
       }
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
+    "compile": "tsc -p ./ && tsc -p src/webview && node esbuild.js",
+    "compile:host": "tsc -p ./",
+    "compile:webview": "tsc -p src/webview && node esbuild.js",
     "watch": "tsc -watch -p ./",
-    "lint": "tsc -p ./ --noEmit",
+    "watch:webview": "node esbuild.js --watch",
+    "lint": "tsc -p ./ --noEmit && tsc -p src/webview",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package"
+    "build:pi-bundle": "node scripts/build-pi-bundle.mjs",
+    "package": "vsce package",
+    "package:all": "node scripts/package-all.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
     "@types/vscode": "^1.94.0",
     "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.28.0",
     "typescript": "^5.6.0"
   }
 }

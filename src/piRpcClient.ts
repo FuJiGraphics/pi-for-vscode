@@ -1,14 +1,33 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import * as fs from "node:fs";
+import * as net from "node:net";
+import * as os from "node:os";
+import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import * as vscode from "vscode";
+import type { PiRpcMessage } from "./protocol";
 
-export type PiRpcMessage = Record<string, unknown>;
+export type { PiRpcMessage } from "./protocol";
 
 export interface PiRpcClientOptions {
   piPath: string;
+  /** "executable": spawn piPath directly. "node-script": spawn nodePath with piPath. */
+  launchKind: "executable" | "node-script";
+  /** Node binary used when launchKind === "node-script". */
+  nodePath?: string;
+  /** When true the broker keeps ELECTRON_RUN_AS_NODE set (nodePath is VS Code's Electron). */
+  runAsNode: boolean;
   cwd?: string;
   persistSessions: boolean;
   extraArgs: string[];
+  /** Initial pi model (qualified "provider/id[:thinking]"); switched at runtime via set_model. */
+  model?: string;
+  /** BYOK API keys injected into the pi child env, keyed by env var name. */
+  secrets?: Record<string, string>;
+  brokerScriptPath: string;
+  brokerStoragePath: string;
+  brokerIdleTimeoutMs: number;
 }
 
 interface PendingRequest {
@@ -18,11 +37,17 @@ interface PendingRequest {
 }
 
 export class PiRpcClient implements vscode.Disposable {
-  private process?: ChildProcessWithoutNullStreams;
+  private socket?: net.Socket;
+  private connected = false;
+  private starting?: Promise<void>;
+  private disposed = false;
   private buffer = "";
-  private readonly decoder = new StringDecoder("utf8");
+  private decoder = new StringDecoder("utf8");
   private requestId = 0;
   private readonly pending = new Map<string, PendingRequest>();
+  private brokerId?: string;
+  private brokerSocketPath?: string;
+  private brokerLogPath?: string;
 
   private readonly eventEmitter = new vscode.EventEmitter<PiRpcMessage>();
   private readonly stderrEmitter = new vscode.EventEmitter<string>();
@@ -37,47 +62,23 @@ export class PiRpcClient implements vscode.Disposable {
   constructor(private readonly options: PiRpcClientOptions) {}
 
   get isStarted(): boolean {
-    return this.process !== undefined && !this.process.killed;
+    return this.connected || this.starting !== undefined;
   }
 
   start(): void {
-    if (this.isStarted) return;
-
-    const args = ["--mode", "rpc"];
-    if (!this.options.persistSessions) args.push("--no-session");
-    args.push(...this.options.extraArgs);
-
-    this.process = spawn(this.options.piPath, args, {
-      cwd: this.options.cwd,
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    this.process.stdout.on("data", (chunk: Buffer) => this.handleStdout(chunk));
-    this.process.stderr.on("data", (chunk: Buffer) => {
-      this.stderrEmitter.fire(chunk.toString("utf8"));
-    });
-    this.process.on("error", (error) => {
-      this.rejectAll(error);
-      this.errorEmitter.fire(error);
-    });
-    this.process.on("close", (code, signal) => {
-      this.rejectAll(new Error(`pi RPC process closed (${code ?? "null"}${signal ? `, ${signal}` : ""})`));
-      this.closeEmitter.fire({ code, signal });
-      this.process = undefined;
-      this.buffer = "";
+    void this.ensureStarted().catch((error) => {
+      this.rejectAll(error instanceof Error ? error : new Error(String(error)));
+      if (!this.disposed) this.errorEmitter.fire(error instanceof Error ? error : new Error(String(error)));
     });
   }
 
   send(command: PiRpcMessage): void {
-    this.start();
-    const proc = this.process;
-    if (!proc) throw new Error("pi RPC process is not available");
-    proc.stdin.write(`${JSON.stringify(command)}\n`);
+    void this.sendAsync(command).catch((error) => {
+      if (!this.disposed) this.errorEmitter.fire(error instanceof Error ? error : new Error(String(error)));
+    });
   }
 
   request(command: PiRpcMessage, timeoutMs = 30_000): Promise<PiRpcMessage> {
-    this.start();
     const id = typeof command.id === "string" ? command.id : `req-${++this.requestId}`;
     const payload = { ...command, id };
 
@@ -89,27 +90,177 @@ export class PiRpcClient implements vscode.Disposable {
 
       this.pending.set(id, { resolve, reject, timeout });
 
-      try {
-        this.send(payload);
-      } catch (error) {
+      void this.sendAsync(payload).catch((error) => {
         clearTimeout(timeout);
         this.pending.delete(id);
         reject(error instanceof Error ? error : new Error(String(error)));
-      }
+      });
     });
   }
 
   dispose(): void {
+    this.disposed = true;
     this.rejectAll(new Error("pi RPC client disposed"));
-    this.process?.kill();
-    this.process = undefined;
+    this.socket?.destroy();
+    this.socket = undefined;
+    this.connected = false;
     this.eventEmitter.dispose();
     this.stderrEmitter.dispose();
     this.closeEmitter.dispose();
     this.errorEmitter.dispose();
   }
 
-  private handleStdout(chunk: Buffer): void {
+  private async sendAsync(command: PiRpcMessage): Promise<void> {
+    if (this.disposed) throw new Error("pi RPC client disposed");
+    await this.ensureStarted();
+
+    const socket = this.socket;
+    if (!socket || socket.destroyed || !this.connected) throw new Error("Pi background broker is not connected");
+
+    await new Promise<void>((resolve, reject) => {
+      socket.write(`${JSON.stringify(command)}\n`, "utf8", (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+  }
+
+  private async ensureStarted(): Promise<void> {
+    if (this.disposed) throw new Error("pi RPC client disposed");
+    if (this.connected && this.socket && !this.socket.destroyed) return;
+    if (this.starting) return this.starting;
+
+    this.starting = this.connectToBroker().finally(() => {
+      this.starting = undefined;
+    });
+    return this.starting;
+  }
+
+  private async connectToBroker(): Promise<void> {
+    const socketPath = this.getBrokerSocketPath();
+
+    try {
+      await this.openSocket(socketPath, 250);
+      return;
+    } catch {
+      // No broker is currently listening. Launch one below.
+    }
+
+    this.launchBroker(socketPath);
+
+    const deadline = Date.now() + 12_000;
+    let lastError: unknown;
+    while (Date.now() < deadline) {
+      try {
+        await this.openSocket(socketPath, 750);
+        return;
+      } catch (error) {
+        lastError = error;
+        await delay(150);
+      }
+    }
+
+    const detail = lastError instanceof Error ? lastError.message : String(lastError ?? "unknown error");
+    throw new Error(`Failed to connect to Pi background broker. Log: ${this.getBrokerLogPath()}. Last error: ${detail}`);
+  }
+
+  private openSocket(socketPath: string, timeoutMs: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const socket = net.createConnection(socketPath);
+      let settled = false;
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        socket.removeListener("connect", onConnect);
+        socket.removeListener("error", onError);
+      };
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        socket.destroy();
+        reject(error);
+      };
+      const onConnect = () => {
+        if (settled) return;
+        if (this.disposed) {
+          fail(new Error("pi RPC client disposed"));
+          return;
+        }
+        settled = true;
+        cleanup();
+        this.attachSocket(socket);
+        resolve();
+      };
+      const onError = (error: Error) => fail(error);
+      const timer = setTimeout(() => fail(new Error(`Timed out connecting to ${socketPath}`)), timeoutMs);
+
+      socket.once("connect", onConnect);
+      socket.once("error", onError);
+    });
+  }
+
+  private attachSocket(socket: net.Socket): void {
+    this.socket?.destroy();
+    this.socket = socket;
+    this.connected = true;
+    this.buffer = "";
+    this.decoder = new StringDecoder("utf8");
+
+    socket.on("data", (chunk: Buffer) => this.handleSocketData(chunk));
+    socket.on("error", (error) => {
+      if (this.disposed) return;
+      this.rejectAll(error instanceof Error ? error : new Error(String(error)));
+      this.errorEmitter.fire(error instanceof Error ? error : new Error(String(error)));
+    });
+    socket.on("close", () => {
+      if (this.socket !== socket) return;
+      this.socket = undefined;
+      this.connected = false;
+      this.buffer = "";
+      if (this.disposed) return;
+      this.rejectAll(new Error("Pi background broker connection closed"));
+      this.closeEmitter.fire({ code: null, signal: null });
+    });
+  }
+
+  private launchBroker(socketPath: string): void {
+    if (!fs.existsSync(this.options.brokerScriptPath)) {
+      throw new Error(`Pi broker script not found: ${this.options.brokerScriptPath}`);
+    }
+
+    fs.mkdirSync(this.options.brokerStoragePath, { recursive: true });
+    if (process.platform !== "win32") fs.mkdirSync(path.dirname(socketPath), { recursive: true });
+
+    const brokerConfig = {
+      socketPath,
+      piPath: this.options.piPath,
+      launchKind: this.options.launchKind,
+      nodePath: this.options.nodePath,
+      runAsNode: this.options.runAsNode,
+      cwd: this.options.cwd,
+      persistSessions: this.options.persistSessions,
+      extraArgs: this.options.extraArgs,
+      model: this.options.model,
+      secrets: this.options.secrets,
+      idleTimeoutMs: this.options.brokerIdleTimeoutMs,
+      logPath: this.getBrokerLogPath(),
+    };
+
+    const child = spawn(process.execPath, [this.options.brokerScriptPath], {
+      cwd: this.options.cwd,
+      detached: true,
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: "1",
+        PI_FOR_VSCODE_BROKER_CONFIG: JSON.stringify(brokerConfig),
+      },
+      stdio: "ignore",
+    });
+    child.unref();
+  }
+
+  private handleSocketData(chunk: Buffer): void {
     this.buffer += this.decoder.write(chunk);
 
     while (true) {
@@ -134,6 +285,26 @@ export class PiRpcClient implements vscode.Disposable {
       return;
     }
 
+    if (message.type === "broker_ready") return;
+
+    if (message.type === "stderr") {
+      if (typeof message.text === "string") this.stderrEmitter.fire(message.text);
+      return;
+    }
+
+    if (message.type === "broker_error") {
+      const error = new Error(String(message.error ?? "Pi background broker error"));
+      this.rejectAll(error);
+      this.errorEmitter.fire(error);
+      return;
+    }
+
+    if (message.type === "broker_pi_close") {
+      this.rejectAll(new Error("Pi RPC process closed"));
+      this.closeEmitter.fire({ code: typeof message.code === "number" ? message.code : null, signal: isNodeSignal(message.signal) ? message.signal : null });
+      return;
+    }
+
     if (message.type === "response" && typeof message.id === "string") {
       const pending = this.pending.get(message.id);
       if (pending) {
@@ -153,4 +324,47 @@ export class PiRpcClient implements vscode.Disposable {
       this.pending.delete(id);
     }
   }
+
+  private getBrokerId(): string {
+    if (!this.brokerId) {
+      this.brokerId = createHash("sha256")
+        .update(JSON.stringify({
+          piPath: this.options.piPath,
+          launchKind: this.options.launchKind,
+          nodePath: this.options.nodePath ?? "",
+          runAsNode: this.options.runAsNode,
+          cwd: this.options.cwd ?? "",
+          persistSessions: this.options.persistSessions,
+          extraArgs: this.options.extraArgs,
+        }))
+        .digest("hex")
+        .slice(0, 24);
+    }
+    return this.brokerId;
+  }
+
+  private getBrokerSocketPath(): string {
+    if (!this.brokerSocketPath) {
+      const id = this.getBrokerId();
+      this.brokerSocketPath = process.platform === "win32"
+        ? `\\\\.\\pipe\\pi-for-vscode-${id}`
+        : path.join(os.tmpdir(), "pi-for-vscode", `${id}.sock`);
+    }
+    return this.brokerSocketPath;
+  }
+
+  private getBrokerLogPath(): string {
+    if (!this.brokerLogPath) {
+      this.brokerLogPath = path.join(this.options.brokerStoragePath, `broker-${this.getBrokerId()}.log`);
+    }
+    return this.brokerLogPath;
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isNodeSignal(value: unknown): value is NodeJS.Signals {
+  return typeof value === "string";
 }
