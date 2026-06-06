@@ -33,7 +33,13 @@ export function toSessionQuickPickItem(summary: PiSessionSummary, workspaceCwd?:
   };
 }
 
-export function toSessionListItem(summary: PiSessionSummary): SessionListItem {
+// Runtime liveness flags injected by the provider (not derivable from the on-disk
+// summary): whether a background pi runtime is mid-turn on this session, and whether
+// it has a buffered UI request waiting for the user to switch to it.
+export function toSessionListItem(
+  summary: PiSessionSummary,
+  runtime?: { isRunning?: boolean; needsInput?: boolean },
+): SessionListItem {
   const metaParts = [
     workspaceLabel(summary),
     messageCountLabel(summary.messageCount),
@@ -46,6 +52,8 @@ export function toSessionListItem(summary: PiSessionSummary): SessionListItem {
     preview: summary.preview,
     meta: metaParts.join(" • "),
     isCurrent: summary.isCurrent,
+    isRunning: runtime?.isRunning,
+    needsInput: runtime?.needsInput,
   };
 }
 

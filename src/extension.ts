@@ -13,6 +13,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("pi-for-vscode.sessions", () => provider.sessions()),
     vscode.commands.registerCommand("pi-for-vscode.stop", () => provider.stop()),
     vscode.commands.registerCommand("pi-for-vscode.repairAgent", () => provider.repairAgent()),
+    // Regaining window focus is a cheap proxy for waking from sleep — verify the
+    // broker link so a half-open socket is detected and reconnected promptly.
+    vscode.window.onDidChangeWindowState((windowState) => {
+      if (windowState.focused) provider.onWindowFocused();
+    }),
   );
 
   if (vscode.workspace.getConfiguration("pi-for-vscode").get<boolean>("openOnStartup", true)) {

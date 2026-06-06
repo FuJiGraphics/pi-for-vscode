@@ -42,6 +42,7 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
       </div>
     </header>
     <div id="status" class="status">Pi</div>
+    <div id="connection-banner" class="connection-banner" role="status" aria-live="polite" hidden></div>
     <main id="messages" tabindex="0"></main>
     <button id="jumpLatest" class="jump-latest" hidden aria-label="Jump to latest">↓ Jump to latest</button>
     <section id="history-panel" class="history-panel" aria-label="Session history">
@@ -65,7 +66,7 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
           <button class="pill-button" title="Approval mode" aria-label="Approval mode">✋ <span class="optional">Ask for approval</span>⌄</button>
           <button id="stop" class="stop-button" disabled hidden>Stop</button>
           <span class="spacer"></span>
-          <div id="thinkingControl" class="thinking-control" hidden aria-label="Reasoning effort"></div>
+          <div id="thinkingControl" class="thinking-control" hidden aria-label="Thinking level"></div>
           <button id="model" class="model-button" title="Model" aria-label="Model">Pi⌄</button>
           <button id="send" class="send-button empty" title="Send" aria-label="Send">↑</button>
         </div>

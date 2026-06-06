@@ -47,12 +47,12 @@ function isStreaming(message: UiMessage): boolean {
 }
 
 const THINKING_LEVEL_LABELS: Record<string, string> = {
-  off: "Off",
-  minimal: "Min",
-  low: "Low",
-  medium: "Med",
-  high: "High",
-  xhigh: "Max",
+  off: "off",
+  minimal: "minimal",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "xhigh",
 };
 
 function renderThinkingControl(): void {
@@ -70,12 +70,12 @@ function renderThinkingControl(): void {
   const currentLabel = THINKING_LEVEL_LABELS[currentLevel] || currentLevel;
   thinkingControlEl.hidden = false;
   thinkingControlEl.dataset.currentLevel = currentLevel;
-  thinkingControlEl.title = `Reasoning effort: ${currentLabel}`;
-  thinkingControlEl.setAttribute("aria-label", `Reasoning effort: ${currentLabel}`);
+  thinkingControlEl.title = `Thinking level: ${currentLabel}`;
+  thinkingControlEl.setAttribute("aria-label", `Thinking level: ${currentLabel}`);
   thinkingControlEl.innerHTML =
     '<span class="thinking-label">' +
     escapeHtml(currentLabel) +
-    '</span><div class="thinking-steps" role="group" aria-label="Reasoning effort levels">' +
+    '</span><div class="thinking-steps" role="group" aria-label="Thinking levels">' +
     levels
       .map((level, index) => {
         const filled = index <= currentIndex ? " filled" : "";
@@ -87,9 +87,9 @@ function renderThinkingControl(): void {
           '" data-action="set-thinking-level" data-level="' +
           escapeHtml(level) +
           '" title="' +
-          escapeHtml(`Set effort to ${THINKING_LEVEL_LABELS[level] || level}`) +
+          escapeHtml(`Set thinking level to ${THINKING_LEVEL_LABELS[level] || level}`) +
           '" aria-label="' +
-          escapeHtml(`Set effort to ${THINKING_LEVEL_LABELS[level] || level}`) +
+          escapeHtml(`Set thinking level to ${THINKING_LEVEL_LABELS[level] || level}`) +
           '"></button>'
         );
       })

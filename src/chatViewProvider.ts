@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
 import { PiRpcClient } from "./piRpcClient";
 import { NodeTooOldError, PiNotInstalledError, repairBundledPi, resolvePiRuntime } from "./piResolver";
 import type { CommandListItem, ExtensionToWebviewMessage, ImageAttachment, ModelListItem, PiRpcMessage, WebviewToExtensionMessage } from "./protocol";
-import { deleteSession, isPiSessionInWorkspace, listPiSessions, readPiSessionCwd, readPiSessionMessages, renameSession, type PiSessionSummary } from "./sessionStore";
+import { deleteSession, isPiSessionInWorkspace, listPiSessions, readPiSessionCwd, renameSession, type PiSessionSummary } from "./sessionStore";
 import { asRecord, toSessionListItem, toSessionQuickPickItem, type SessionQuickPickItem } from "./sessionFormat";
 import { listPiModels, PROVIDER_ENV_VARS, type PiModel } from "./modelStore";
 import { getChatHtml } from "./webviewHtml";
@@ -42,17 +43,33 @@ interface PiConfiguration {
   brokerIdleTimeoutMinutes: number;
 }
 
+// One independent Pi execution context. Each running session gets its own runtime,
+// which owns its own broker socket + `pi --mode rpc` process. The client is connected
+// only while the runtime is ACTIVE or RUNNING; a background+idle runtime drops its
+// client and survives as a stub (id/sessionFile/model) so its detached broker idle-reaps
+// the pi and a later activation can reattach (warm) or respawn from disk (cold).
+interface SessionRuntime {
+  readonly id: string;
+  client?: PiRpcClient;
+  cwd: string;
+  sessionFile?: string;
+  isRunning: boolean;
+  model?: string;
+  pendingUiRequest?: PiRpcMessage;
+  readonly disposables: vscode.Disposable[];
+}
+
 export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   private view?: vscode.WebviewView;
-  private client?: PiRpcClient;
-  private clientCwd?: string;
-  private activeSessionFile?: string;
-  private previewSessionFile?: string;
-  private isRunning = false;
+  private readonly runtimes = new Map<string, SessionRuntime>();
+  private activeRuntimeId?: string;
   private readonly webviewDisposables: vscode.Disposable[] = [];
-  private readonly clientDisposables: vscode.Disposable[] = [];
 
   constructor(private readonly context: vscode.ExtensionContext) {}
+
+  private get active(): SessionRuntime | undefined {
+    return this.activeRuntimeId ? this.runtimes.get(this.activeRuntimeId) : undefined;
+  }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.disposeWebviewListeners();
@@ -65,6 +82,10 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
     this.webviewDisposables.push(
       webviewView.webview.onDidReceiveMessage((message) => this.handleWebviewMessage(message as WebviewToExtensionMessage)),
+      // View revealed again (sidebar reopened / tab refocused) — verify the link.
+      webviewView.onDidChangeVisibility(() => {
+        if (webviewView.visible) this.probeConnection();
+      }),
     );
 
     void this.postState();
@@ -75,19 +96,36 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     await vscode.commands.executeCommand(`${VIEW_ID}.focus`);
   }
 
+  // New Session is a genuinely new execution unit: spawn a fresh runtime so any
+  // previously-active (and possibly still-running) session keeps its own pi alive.
   async newSession(): Promise<void> {
-    const client = await this.ensureClientReady();
-    if (!client) return;
-    const response = await client.request({ type: "new_session" });
+    const cwd = getWorkspaceCwd();
+    if (!cwd) {
+      this.postSystem("Open a workspace folder to start a project-scoped Pi session.");
+      return;
+    }
+    const previous = this.active;
+    const rt = await this.createRuntime(cwd);
+    if (!rt?.client) return;
+
+    const response = await rt.client.request({ type: "new_session" });
     if (response.success === false) {
       this.postSystem(`Failed to start a new session: ${String(response.error ?? "unknown error")}`);
+      await this.reapRuntime(rt);
       return;
     }
     const data = asRecord(response.data);
-    if (data?.cancelled === true) return;
-    this.setRunning(false);
+    if (data?.cancelled === true) {
+      await this.reapRuntime(rt);
+      return;
+    }
+
+    this.activeRuntimeId = rt.id;
+    if (previous && previous !== rt) this.handleSwitchAway(previous);
+    this.setRunning(rt, false);
     this.post({ type: "reset" });
-    void this.postState();
+    await this.postState();
+    await this.postSessionList();
   }
 
   async sessions(): Promise<void> {
@@ -123,10 +161,12 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     if (picked.sessionPath) await this.switchSession(picked.sessionPath);
   }
 
+  // Stop only the session the user is looking at. Background runtimes keep running.
   async stop(): Promise<void> {
-    if (!this.client?.isStarted) return;
-    this.setRunning(false);
-    const response = await this.client.request({ type: "abort" });
+    const rt = this.active;
+    if (!rt?.client?.isStarted) return;
+    this.setRunning(rt, false);
+    const response = await rt.client.request({ type: "abort" });
     if (response.success === false) {
       this.postSystem(`Failed to abort: ${String(response.error ?? "unknown error")}`);
       return;
@@ -136,8 +176,7 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
   async repairAgent(): Promise<void> {
     await this.open();
-    this.resetClient();
-    this.setRunning(false);
+    await this.reapAllRuntimes();
     try {
       const entry = await repairBundledPi(this.context);
       this.postSystem(`Reinstalled the bundled Pi agent at ${entry}.`);
@@ -149,16 +188,35 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
   dispose(): void {
     this.disposeWebviewListeners();
-    this.resetClient();
+    // Best-effort: ask each detached broker to shut down so no orphaned pi outlives
+    // the host (Claude-style: process dies on reload, resume from the on-disk transcript).
+    for (const rt of this.runtimes.values()) {
+      for (const disposable of rt.disposables.splice(0)) disposable.dispose();
+      rt.client?.disposeAndShutdownBroker();
+      rt.client = undefined;
+    }
+    this.runtimes.clear();
+    this.activeRuntimeId = undefined;
   }
 
   private async handleWebviewMessage(message: WebviewToExtensionMessage): Promise<void> {
     try {
       switch (message.type) {
         case "ready": {
+          const rt = await this.ensureActiveRuntime();
+          const webviewSessionFile = message.sessionFile;
+          // Resume the session the user was last viewing (Claude-style resume-from-disk):
+          // after a reload the fresh broker cold-starts on pi's default session, so steer
+          // it back to the remembered one. A still-live runtime is already on it → no-op.
+          if (rt?.client?.isStarted && webviewSessionFile && await this.isCurrentWorkspaceSession(webviewSessionFile)) {
+            const loaded = readSessionFile(await this.requestState(rt.client));
+            if (!samePath(loaded, webviewSessionFile)) {
+              const response = await rt.client.request({ type: "switch_session", sessionPath: webviewSessionFile }, 30_000).catch(() => undefined);
+              if (response && response.success !== false) rt.sessionFile = webviewSessionFile;
+            }
+          }
           const state = await this.postState();
           const currentSessionFile = readSessionFile(state);
-          const webviewSessionFile = message.sessionFile;
           const hasSessionMismatch = Boolean((currentSessionFile || webviewSessionFile) && !samePath(currentSessionFile, webviewSessionFile));
           if (!message.hasMessages || hasSessionMismatch) await this.hydrateSessionMessages(true, state?.isStreaming === true);
           return;
@@ -208,9 +266,16 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
         case "copy":
           await vscode.env.clipboard.writeText(message.text ?? "");
           return;
+        case "wake":
+          this.probeConnection();
+          return;
+        case "reconnect":
+          await this.forceReconnect();
+          return;
         case "extensionUiResponse": {
-          const client = await this.ensureClientReady();
-          client?.send(message.response as PiRpcMessage);
+          // The request is only ever shown for the active runtime, so the response
+          // routes back to the active runtime's pi (the one that raised it).
+          this.active?.client?.send(message.response as PiRpcMessage);
           return;
         }
       }
@@ -224,30 +289,16 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     const imageBlocks = this.toPiImageBlocks(images);
     if (!trimmed && imageBlocks.length === 0) return;
 
-    const client = await this.ensureClientReady();
-    if (!client) return;
-
-    if (this.isPreviewingDetachedSession()) {
-      const previewFile = this.previewSessionFile!; // isPreviewingDetachedSession() guarantees this is set.
-      const state = await this.getClientState(client);
-      const currentSessionFile = readSessionFile(state);
-      const isStreaming = state?.isStreaming === true;
-      if (!samePath(previewFile, currentSessionFile)) {
-        if (isStreaming) {
-          this.postSystem("Pi is still working in another session. Select the current session or wait until it finishes before sending a new prompt here.");
-          return;
-        }
-        await this.switchSession(previewFile);
-      }
-    }
+    const rt = await this.ensureActiveRuntime();
+    if (!rt?.client) return;
 
     const command: PiRpcMessage = { type: "prompt", message: trimmed };
     if (imageBlocks.length > 0) command.images = imageBlocks;
-    if (this.isRunning) {
+    if (rt.isRunning) {
       command.streamingBehavior = this.getConfiguration().defaultStreamingBehavior;
     }
 
-    const response = await client.request(command);
+    const response = await rt.client.request(command);
     if (response.success === false) {
       this.postSystem(`Prompt rejected: ${String(response.error ?? "unknown error")}`);
     }
@@ -265,6 +316,11 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     return blocks;
   }
 
+  // Switching is "change what's visible", never "stop/reuse the executor":
+  //   1. already active → just refresh.
+  //   2. a live (or warm-stub) runtime already owns the session → activate it.
+  //   3. otherwise spawn a fresh runtime and load the file into it.
+  // It never blocks on the current session being busy — that session keeps running.
   private async switchSession(sessionPath: string): Promise<void> {
     if (!await this.isCurrentWorkspaceSession(sessionPath)) {
       this.postSystem("That session belongs to a different workspace and cannot be opened from this project.");
@@ -272,67 +328,118 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
       return;
     }
 
-    const client = await this.ensureClientReady();
-    if (!client) return;
-
-    const state = await this.getClientState(client);
-    const currentSessionFile = readSessionFile(state);
-    const isStreaming = state?.isStreaming === true;
-    this.activeSessionFile = currentSessionFile;
-
-    if (samePath(sessionPath, currentSessionFile)) {
-      this.previewSessionFile = undefined;
+    if (samePath(sessionPath, this.active?.sessionFile)) {
       await this.postState();
-      await this.hydrateSessionMessages(true, isStreaming);
+      await this.hydrateSessionMessages(true, this.active?.isRunning === true);
       return;
     }
 
-    if (isStreaming) {
-      await this.previewSession(sessionPath);
-      this.postSystem("Viewing saved history. Pi is still working in the current session in the background.");
+    const existing = this.findRuntimeBySessionFile(sessionPath);
+    if (existing) {
+      await this.activateRuntime(existing.id);
       return;
     }
 
-    const response = await client.request({ type: "switch_session", sessionPath }, 30_000);
+    const cwd = getWorkspaceCwd();
+    if (!cwd) {
+      this.postSystem("Open a workspace folder to start a project-scoped Pi session.");
+      return;
+    }
+    const previous = this.active;
+    const rt = await this.createRuntime(cwd);
+    if (!rt?.client) return;
+
+    const response = await rt.client.request({ type: "switch_session", sessionPath }, 30_000);
     if (response.success === false) {
       this.postSystem(`Failed to switch session: ${String(response.error ?? "unknown error")}`);
+      await this.reapRuntime(rt);
+      return;
+    }
+    const data = asRecord(response.data);
+    if (data?.cancelled === true) {
+      await this.reapRuntime(rt);
       return;
     }
 
-    const data = asRecord(response.data);
-    if (data?.cancelled === true) return;
-
-    this.previewSessionFile = undefined;
-    this.setRunning(false);
+    this.activeRuntimeId = rt.id;
+    if (previous && previous !== rt) this.handleSwitchAway(previous);
+    rt.sessionFile = sessionPath;
+    this.setRunning(rt, false);
     this.post({ type: "reset" });
     await this.postState();
     await this.hydrateSessionMessages(true);
-  }
-
-  private async previewSession(sessionPath: string): Promise<void> {
-    this.previewSessionFile = sessionPath;
-    const messages = await readPiSessionMessages(sessionPath);
-    this.post({ type: "sessionMessages", messages, force: true });
     await this.postSessionList();
   }
 
-  private async hydrateSessionMessages(force = false, allowWhileRunning = false): Promise<void> {
-    if (this.isRunning && !allowWhileRunning) return;
+  // Attach the single UI to an existing runtime's live pi. Reuses the resync/hydrate
+  // flow (postState + get_messages + derive running from isStreaming), so a mid-turn
+  // background session renders its current live state — no saved-history preview.
+  private async activateRuntime(id: string): Promise<void> {
+    const rt = this.runtimes.get(id);
+    if (!rt) return;
 
-    const client = await this.ensureClientReady();
-    if (!client) return;
-    await this.postState();
-    const response = await client.request({ type: "get_messages" }, 10_000).catch(() => undefined);
-    if (!response || response.success === false || (this.isRunning && !allowWhileRunning)) return;
+    const previous = this.active;
+    this.activeRuntimeId = id;
+    if (previous && previous !== rt) this.handleSwitchAway(previous);
+
+    if (!rt.client?.isStarted) {
+      if (!await this.reviveRuntime(rt)) return;
+      // A cold revive may have relaunched a fresh broker whose pi has no session yet;
+      // a warm reattach lands on the live pi already on this session. Load if needed.
+      if (rt.sessionFile && rt.client) {
+        const state = await this.requestState(rt.client);
+        if (!samePath(readSessionFile(state), rt.sessionFile)) {
+          await rt.client.request({ type: "switch_session", sessionPath: rt.sessionFile }, 30_000).catch(() => undefined);
+        }
+      }
+    }
+
+    this.post({ type: "reset" });
+    await this.syncActive(false);
+
+    // Replay any UI request buffered while this runtime was in the background, now
+    // that it owns the webview. The response routes back to it via extensionUiResponse.
+    if (rt.pendingUiRequest) {
+      this.post({ type: "extensionUiRequest", request: rt.pendingUiRequest });
+      rt.pendingUiRequest = undefined;
+    }
+    await this.postSessionList();
+  }
+
+  private findRuntimeBySessionFile(sessionPath: string): SessionRuntime | undefined {
+    for (const rt of this.runtimes.values()) {
+      if (rt.sessionFile && samePath(rt.sessionFile, sessionPath)) return rt;
+    }
+    return undefined;
+  }
+
+  // Returns the pi state fetched via postState() so callers (resync/syncActive) can read
+  // isStreaming without a second get_state round-trip.
+  private async hydrateSessionMessages(force = false, allowWhileRunning = false): Promise<Record<string, unknown> | undefined> {
+    const rt = this.active;
+    if (!rt?.client?.isStarted) return undefined;
+    if (rt.isRunning && !allowWhileRunning) return undefined;
+
+    const state = await this.postState();
+    const response = await rt.client.request({ type: "get_messages" }, 10_000).catch(() => undefined);
+    if (!response || response.success === false || (rt.isRunning && !allowWhileRunning)) return state;
 
     const data = asRecord(response.data);
     const messages = Array.isArray(data?.messages) ? data.messages : [];
     this.post({ type: "sessionMessages", messages, force });
+    return state;
   }
 
   private async postSessionList(): Promise<void> {
     const summaries = await this.collectSessions();
-    this.post({ type: "sessionList", sessions: summaries.map(toSessionListItem) });
+    this.post({ type: "sessionList", sessions: summaries.map((summary) => toSessionListItem(summary, this.runtimeFlagsFor(summary.filePath))) });
+  }
+
+  // Liveness flags for the session-list badges, sourced from the runtime map.
+  private runtimeFlagsFor(filePath: string): { isRunning?: boolean; needsInput?: boolean } | undefined {
+    const rt = this.findRuntimeBySessionFile(filePath);
+    if (!rt) return undefined;
+    return { isRunning: rt.isRunning, needsInput: rt.pendingUiRequest !== undefined };
   }
 
   private async deleteSession(sessionPath: string): Promise<void> {
@@ -348,6 +455,9 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
       "Delete",
     );
     if (confirm !== "Delete") return;
+    // Tear down any live runtime holding this session before unlinking its file.
+    const rt = this.findRuntimeBySessionFile(sessionPath);
+    if (rt) await this.reapRuntime(rt);
     try {
       await deleteSession(sessionPath);
     } catch (error) {
@@ -366,28 +476,29 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     const trimmed = name.trim();
     if (!trimmed) return;
     try {
-      // When pi already has this session loaded, route the rename through its RPC
-      // so pi's in-memory session name (what get_state returns) updates too.
+      // When the active runtime's pi has this session loaded, route the rename through
+      // its RPC so pi's in-memory session name (what get_state returns) updates too.
       // Writing the file directly behind a running broker leaves pi unaware, so the
       // next get_state/switch_session reports the stale name and the rename "reverts".
       const renamedViaPi = await this.renameActiveSessionViaPi(sessionPath, trimmed);
       if (!renamedViaPi) await renameSession(sessionPath, trimmed);
-      if (samePath(sessionPath, this.activeSessionFile)) await this.postState();
+      if (samePath(sessionPath, this.active?.sessionFile)) await this.postState();
     } catch (error) {
       this.postSystem(`Failed to rename session: ${error instanceof Error ? error.message : String(error)}`);
     }
     await this.postSessionList();
   }
 
-  // Rename via pi's set_session_name RPC when pi is the live owner of this session.
-  // Returns false when pi isn't running on it (caller falls back to a direct,
-  // well-formed file write). Throws if pi rejects the rename.
+  // Rename via pi's set_session_name RPC when the active runtime is the live owner of
+  // this session. Returns false otherwise (caller falls back to a direct file write).
+  // Throws if pi rejects the rename.
   private async renameActiveSessionViaPi(sessionPath: string, name: string): Promise<boolean> {
-    const client = this.client?.isStarted ? this.client : undefined;
-    if (!client) return false;
-    // Refresh the broker's loaded-session pointer so we never RPC the wrong session.
-    await this.getClientState(client);
-    if (!samePath(sessionPath, this.activeSessionFile)) return false;
+    const rt = this.active;
+    const client = rt?.client?.isStarted ? rt.client : undefined;
+    if (!rt || !client) return false;
+    // Refresh the runtime's loaded-session pointer so we never RPC the wrong session.
+    await this.getClientState(rt);
+    if (!samePath(sessionPath, rt.sessionFile)) return false;
     const response = await client.request({ type: "set_session_name", name }, 10_000);
     if (response.success === false) {
       throw new Error(String(response.error ?? "pi rejected the rename"));
@@ -398,10 +509,9 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
   private async collectSessions(): Promise<PiSessionSummary[]> {
     const cwd = getWorkspaceCwd();
     if (!cwd) return [];
-
-    const client = await this.ensureClientReady();
-    const stateData = client ? await this.requestState(client) : undefined;
-    const currentSessionFile = readSessionFile(stateData);
+    // Use the active runtime's tracked session file for the "current" marker — no RPC,
+    // so the frequent (per agent_start/agent_end) badge refresh stays cheap.
+    const currentSessionFile = this.active?.sessionFile;
     return listPiSessions({ cwd, currentSessionFile });
   }
 
@@ -436,14 +546,14 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
   }
 
   // Slash-command palette source. Unlike postModelList (which spawns `pi --list-models`),
-  // commands come from the live session over the RPC client, like requestState/newSession.
+  // commands come from the active runtime's live session over the RPC client.
   private async postCommandList(): Promise<void> {
-    const client = await this.ensureClientReady();
-    if (!client) {
+    const rt = await this.ensureActiveRuntime();
+    if (!rt?.client) {
       this.post({ type: "commandList", commands: [] });
       return;
     }
-    const response = await client.request({ type: "get_commands" }, 10_000).catch(() => undefined);
+    const response = await rt.client.request({ type: "get_commands" }, 10_000).catch(() => undefined);
     if (!response || response.success === false) {
       this.post({ type: "commandList", commands: [] });
       return;
@@ -472,25 +582,26 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
   private async setModel(modelId: string): Promise<void> {
     if (!modelId) return;
-    const client = await this.ensureClientReady();
-    if (!client) return;
+    const rt = await this.ensureActiveRuntime();
+    if (!rt?.client) return;
 
-    // Capture the active session so we can restore it after pi restarts.
-    const sessionFile = readSessionFile(await this.requestState(client));
+    // Capture the active session so we can restore it after this runtime's pi restarts.
+    const sessionFile = readSessionFile(await this.requestState(rt.client));
 
     const secrets = await this.getSecretsEnv();
-    const response = await client.request({ type: "set_model", model: modelId, secrets }, 30_000);
+    const response = await rt.client.request({ type: "set_model", model: modelId, secrets }, 30_000);
     if (response.success === false) {
       this.postSystem(`Failed to switch model: ${String(response.error ?? "unknown error")}`);
       return;
     }
-    // Persist only after the broker accepted the switch, so the stored selection
-    // (used for the picker's current marker and the next cold start) never drifts.
+    // Per-runtime model — set_model only restarts THIS runtime's broker's pi, so other
+    // sessions are unaffected. The global key is just the default seed for new runtimes.
+    rt.model = modelId;
     await this.context.globalState.update(SELECTED_MODEL_KEY, modelId);
 
-    this.setRunning(false);
+    this.setRunning(rt, false);
     if (sessionFile && await this.isCurrentWorkspaceSession(sessionFile)) {
-      await client.request({ type: "switch_session", sessionPath: sessionFile }, 30_000).catch(() => undefined);
+      await rt.client.request({ type: "switch_session", sessionPath: sessionFile }, 30_000).catch(() => undefined);
     }
     await this.postState();
     await this.hydrateSessionMessages(true);
@@ -500,12 +611,12 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     const trimmed = level.trim().toLowerCase();
     if (!THINKING_LEVELS.has(trimmed)) return;
 
-    const client = await this.ensureClientReady();
-    if (!client) return;
+    const rt = await this.ensureActiveRuntime();
+    if (!rt?.client) return;
 
-    const response = await client.request({ type: "set_thinking_level", level: trimmed }, 10_000);
+    const response = await rt.client.request({ type: "set_thinking_level", level: trimmed }, 10_000);
     if (response.success === false) {
-      this.postSystem(`Failed to change effort: ${String(response.error ?? "unknown error")}`);
+      this.postSystem(`Failed to change thinking level: ${String(response.error ?? "unknown error")}`);
       return;
     }
     await this.postState();
@@ -547,10 +658,15 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
   }
 
   private async currentModelRef(): Promise<string | undefined> {
+    // Prefer the active session's own model so the picker's current marker reflects
+    // what the visible session is using, not just the global default.
+    const activeModel = this.active?.model;
+    if (activeModel) return activeModel;
     const stored = this.context.globalState.get<string>(SELECTED_MODEL_KEY);
     if (stored) return stored;
-    if (!this.client?.isStarted) return undefined;
-    const state = await this.requestState(this.client);
+    const client = this.active?.client;
+    if (!client?.isStarted) return undefined;
+    const state = await this.requestState(client);
     const model = asRecord(state?.model);
     if (typeof model?.id === "string") return model.id;
     if (typeof model?.name === "string") return model.name;
@@ -563,78 +679,190 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     return model.id.toLowerCase() === r || model.model.toLowerCase() === r || model.id.toLowerCase().endsWith("/" + r);
   }
 
-  private async ensureClientReady(): Promise<PiRpcClient | undefined> {
+  // ---- runtime lifecycle ----
+
+  // Returns a usable active runtime, creating one when there is none (first prompt /
+  // command palette / view ready). Reuses the existing active runtime, shutting it down
+  // only when its loaded session belongs to a different workspace (foreign-state guard).
+  private async ensureActiveRuntime(): Promise<SessionRuntime | undefined> {
     const cwd = getWorkspaceCwd();
     if (!cwd) {
       this.postSystem("Open a workspace folder to start a project-scoped Pi session.");
       return undefined;
     }
 
-    if (this.client?.isStarted) {
-      if (this.isRunning) return this.client;
-      if (samePath(this.clientCwd, cwd)) {
-        const state = await this.getClientState(this.client);
-        if (!state || !await this.isForeignWorkspaceState(state, cwd)) return this.client;
-        await this.shutdownCurrentBroker();
+    const rt = this.active;
+    if (rt) {
+      if (rt.client?.isStarted) {
+        if (rt.isRunning) return rt;
+        if (samePath(rt.cwd, cwd)) {
+          const state = await this.getClientState(rt);
+          if (!state || !await this.isForeignWorkspaceState(state, cwd)) return rt;
+          await this.reapRuntime(rt);
+        } else {
+          await this.reapRuntime(rt);
+        }
+      } else if (samePath(rt.cwd, cwd)) {
+        // Active runtime's pi died (crash / reconnect exhausted) → respawn it in place.
+        if (await this.reviveRuntime(rt)) {
+          void this.postState();
+          return rt;
+        }
+        this.dropRuntime(rt);
       } else {
-        this.resetClient();
+        this.dropRuntime(rt);
       }
     }
 
+    const fresh = await this.createRuntime(cwd);
+    if (fresh) {
+      this.activeRuntimeId = fresh.id;
+      void this.postState();
+    }
+    return fresh;
+  }
+
+  // Build a brand-new runtime (fresh instanceId → its own broker/socket/pi) and connect it.
+  private async createRuntime(cwd: string, model?: string): Promise<SessionRuntime | undefined> {
+    const rt: SessionRuntime = {
+      id: randomUUID(),
+      client: undefined,
+      cwd,
+      sessionFile: undefined,
+      isRunning: false,
+      model: model ?? (this.context.globalState.get<string>(SELECTED_MODEL_KEY) || undefined),
+      pendingUiRequest: undefined,
+      disposables: [],
+    };
+    this.runtimes.set(rt.id, rt);
+    if (!await this.createClientForRuntime(rt)) {
+      this.runtimes.delete(rt.id);
+      return undefined;
+    }
+    return rt;
+  }
+
+  // (Re)connect a runtime's client, wiring per-runtime listeners that each capture `rt`.
+  // Used both for a brand-new runtime and to revive a warm stub (same instanceId → same broker).
+  private async createClientForRuntime(rt: SessionRuntime): Promise<boolean> {
     let runtime;
     try {
       runtime = await resolvePiRuntime(this.context);
     } catch (error) {
       this.reportRuntimeError(error);
-      return undefined;
+      return false;
     }
-
-    this.disposeClientListeners();
-    this.client?.dispose();
     const config = this.getConfiguration();
     const client = new PiRpcClient({
       piPath: runtime.piEntry,
       launchKind: runtime.launchKind,
       nodePath: runtime.nodePath,
       runAsNode: runtime.runAsNode,
-      cwd,
+      cwd: rt.cwd,
       persistSessions: config.persistSessions,
       extraArgs: config.extraArgs,
-      model: this.context.globalState.get<string>(SELECTED_MODEL_KEY) || undefined,
+      model: rt.model ?? (this.context.globalState.get<string>(SELECTED_MODEL_KEY) || undefined),
       secrets: await this.getSecretsEnv(),
       brokerScriptPath: vscode.Uri.joinPath(this.context.extensionUri, "out", "piBroker.js").fsPath,
       brokerStoragePath: this.context.globalStorageUri.fsPath,
       brokerIdleTimeoutMs: config.brokerIdleTimeoutMinutes * 60 * 1000,
+      instanceId: rt.id,
     });
 
-    this.clientDisposables.push(
-      client.onEvent((event) => this.handleRpcEvent(event)),
-      client.onStderr((text) => this.post({ type: "stderr", text })),
-      client.onError((error) => this.postSystem(`Pi RPC error: ${error.message}`)),
-      client.onClose(({ code, signal }) => {
-        this.setRunning(false);
-        this.postSystem(`Pi background process closed (${code ?? "null"}${signal ? `, ${signal}` : ""}).`);
-      }),
+    rt.disposables.push(
+      client.onEvent((event) => this.handleRpcEvent(rt, event)),
+      // Background runtimes never write to the single webview — only the active one does.
+      client.onStderr((text) => { if (rt.id === this.activeRuntimeId) this.post({ type: "stderr", text }); }),
+      client.onError((error) => { if (rt.id === this.activeRuntimeId) this.postSystem(`Pi RPC error: ${error.message}`); }),
+      client.onReconnecting(() => { if (rt.id === this.activeRuntimeId) this.postConnection("reconnecting"); }),
+      client.onReconnected(() => { if (rt.id === this.activeRuntimeId) void this.resync(); }),
+      client.onClose(({ code, signal }) => this.handleRuntimeClose(rt, code, signal)),
     );
 
     client.start();
-    this.client = client;
-    this.clientCwd = cwd;
-    this.activeSessionFile = undefined;
-    this.previewSessionFile = undefined;
-    void this.postState();
-    return client;
+    rt.client = client;
+    return true;
   }
 
-  private async shutdownCurrentBroker(): Promise<void> {
-    const client = this.client;
-    this.disposeClientListeners();
+  private async reviveRuntime(rt: SessionRuntime): Promise<boolean> {
+    if (rt.client?.isStarted) return true;
+    return this.createClientForRuntime(rt);
+  }
+
+  // Switching away: a still-running background session stays connected so we observe its
+  // completion; an idle one drops its client so its broker idle-reaps the pi (warm window).
+  private handleSwitchAway(rt: SessionRuntime): void {
+    if (rt.isRunning) return;
+    this.disconnectRuntime(rt);
+  }
+
+  // Drop the live connection but keep a lightweight stub (id/sessionFile/model) in the map.
+  // The detached broker, now client-less and idle, reaps its pi after brokerIdleTimeoutMs.
+  private disconnectRuntime(rt: SessionRuntime): void {
+    for (const disposable of rt.disposables.splice(0)) disposable.dispose();
+    rt.client?.dispose();
+    rt.client = undefined;
+    rt.isRunning = false;
+  }
+
+  private dropRuntime(rt: SessionRuntime): void {
+    this.disconnectRuntime(rt);
+    this.runtimes.delete(rt.id);
+    if (this.activeRuntimeId === rt.id) this.activeRuntimeId = undefined;
+  }
+
+  // Fully remove a runtime, asking its broker to shut down now (used for foreign-workspace
+  // state, failed spawns, and deletes). Generalizes the old shutdownCurrentBroker().
+  private async reapRuntime(rt: SessionRuntime): Promise<void> {
+    for (const disposable of rt.disposables.splice(0)) disposable.dispose();
+    const client = rt.client;
+    rt.client = undefined;
+    this.runtimes.delete(rt.id);
+    if (this.activeRuntimeId === rt.id) this.activeRuntimeId = undefined;
     if (client?.isStarted) {
       await client.request({ type: "broker_shutdown" }, 5_000).catch(() => undefined);
     }
     client?.dispose();
-    this.clearClientFields();
-    this.setRunning(false);
+  }
+
+  private async reapAllRuntimes(): Promise<void> {
+    const all = [...this.runtimes.values()];
+    await Promise.all(all.map((rt) => this.reapRuntime(rt)));
+  }
+
+  // A background runtime finished its turn: drop its client so the broker idle-reaps the
+  // pi. Deferred so we don't dispose the firing event emitter mid-dispatch; re-checked at
+  // fire time in case the user re-activated it or it started another turn.
+  private onBackgroundRuntimeFinished(rt: SessionRuntime): void {
+    setTimeout(() => {
+      if (this.runtimes.get(rt.id) === rt && !rt.isRunning && rt.id !== this.activeRuntimeId) {
+        this.disconnectRuntime(rt);
+        void this.postSessionList();
+      }
+    }, 0);
+  }
+
+  private handleRuntimeClose(rt: SessionRuntime, code: number | null, signal: NodeJS.Signals | null): void {
+    rt.isRunning = false;
+    const isActive = rt.id === this.activeRuntimeId;
+    if (isActive) {
+      // Reached only when pi's process died or reconnection was exhausted.
+      this.post({ type: "running", value: false });
+      this.postConnection("disconnected");
+      if (code !== null || signal !== null) {
+        this.postSystem(`Pi background process closed (${code ?? "null"}${signal ? `, ${signal}` : ""}).`);
+      }
+    } else {
+      void this.postSessionList();
+    }
+    // Tear the dead client down to a stub (a later activation respawns from disk). Deferred
+    // so we don't dispose the emitter that is currently firing this very onClose listener.
+    setTimeout(() => {
+      if (this.runtimes.get(rt.id) !== rt) return;
+      for (const disposable of rt.disposables.splice(0)) disposable.dispose();
+      rt.client?.dispose();
+      rt.client = undefined;
+    }, 0);
   }
 
   private async isForeignWorkspaceState(state: Record<string, unknown>, cwd: string): Promise<boolean> {
@@ -651,9 +879,10 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     return asRecord(response.data);
   }
 
-  private async getClientState(client: PiRpcClient): Promise<Record<string, unknown> | undefined> {
-    const state = await this.requestState(client);
-    this.activeSessionFile = readSessionFile(state);
+  private async getClientState(rt: SessionRuntime): Promise<Record<string, unknown> | undefined> {
+    if (!rt.client) return undefined;
+    const state = await this.requestState(rt.client);
+    rt.sessionFile = readSessionFile(state);
     return state;
   }
 
@@ -665,48 +894,58 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     }
   }
 
-  private isPreviewingDetachedSession(): boolean {
-    return Boolean(this.previewSessionFile && !samePath(this.previewSessionFile, this.activeSessionFile));
-  }
+  private handleRpcEvent(rt: SessionRuntime, event: PiRpcMessage): void {
+    const isActive = rt.id === this.activeRuntimeId;
 
-  private handleRpcEvent(event: PiRpcMessage): void {
     if (event.type === "agent_start") {
-      this.setRunning(true);
+      this.setRunning(rt, true);
     } else if (event.type === "agent_end") {
-      this.setRunning(false);
-      void this.postState();
+      this.setRunning(rt, false);
+      if (isActive) void this.postState();
+      else this.onBackgroundRuntimeFinished(rt);
     } else if (event.type === "thinking_level_changed") {
-      void this.postState();
+      if (isActive) void this.postState();
     }
 
     if (event.type === "extension_ui_request") {
-      this.post({ type: "extensionUiRequest", request: event });
+      if (isActive) {
+        this.post({ type: "extensionUiRequest", request: event });
+      } else {
+        // A background pi is blocked waiting for human input it can't show. Buffer it
+        // (one slot — pi blocks one at a time) and surface a needs-input badge; we never
+        // auto-answer. It replays when the user activates this session.
+        rt.pendingUiRequest = event;
+        void this.postSessionList();
+      }
       return;
     }
 
-    if (this.isPreviewingDetachedSession()) return;
+    // Only the active runtime drives the single webview. This replaces the old
+    // isPreviewingDetachedSession() suppression: background events are dropped here.
+    if (!isActive) return;
     this.post({ type: "rpcEvent", event });
   }
 
   private async postState(): Promise<Record<string, unknown> | undefined> {
     if (!this.view) return undefined;
-    const workspaceName = getWorkspaceName(this.client?.isStarted ? this.clientCwd : undefined);
-    if (!this.client?.isStarted) {
+    const rt = this.active;
+    const workspaceName = getWorkspaceName(rt?.client?.isStarted ? rt.cwd : undefined);
+    if (!rt?.client?.isStarted) {
       const state = { isStreaming: false, sessionFile: undefined, model: undefined, workspaceName };
       this.post({ type: "state", state });
       return state;
     }
 
     try {
-      const response = await this.client.request({ type: "get_state" }, 10_000);
+      const response = await rt.client.request({ type: "get_state" }, 10_000);
       if (response.success === false) return undefined;
       const data = response.data && typeof response.data === "object" ? { ...(response.data as object), workspaceName } : { workspaceName };
       const state = asRecord(data);
-      if (state && this.clientCwd && state.isStreaming !== true && await this.isForeignWorkspaceState(state, this.clientCwd)) {
-        await this.shutdownCurrentBroker();
+      if (state && rt.cwd && state.isStreaming !== true && await this.isForeignWorkspaceState(state, rt.cwd)) {
+        await this.reapRuntime(rt);
         return this.postState();
       }
-      this.activeSessionFile = readSessionFile(state);
+      rt.sessionFile = readSessionFile(state);
       this.post({ type: "state", state: data });
       return state;
     } catch {
@@ -715,40 +954,74 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     }
   }
 
-  private setRunning(value: boolean): void {
-    this.isRunning = value;
-    this.post({ type: "running", value });
+  private setRunning(rt: SessionRuntime, value: boolean): void {
+    rt.isRunning = value;
+    // The webview running indicator reflects only the active session; a background
+    // runtime's running state is surfaced through the session-list badge instead.
+    if (rt.id === this.activeRuntimeId) this.post({ type: "running", value });
+    else void this.postSessionList();
   }
 
   private postSystem(text: string): void {
     this.post({ type: "system", text });
   }
 
+  private postConnection(status: "reconnecting" | "connected" | "disconnected"): void {
+    this.post({ type: "connection", status });
+  }
+
   private post(message: ExtensionToWebviewMessage): void {
     void this.view?.webview.postMessage(message);
   }
 
+  // Re-sync the UI to the active runtime's authoritative pi state: refresh state + the full
+  // message list and derive `running` from isStreaming, clearing a spinner left stuck when a
+  // turn errored without a trailing agent_end. Used for reconnect (announce=true, drives the
+  // banner) and for activating another runtime (announce=false, no banner flash). The
+  // interrupted turn is NOT auto-resent — the user continues from the synced view.
+  private async syncActive(announceConnection: boolean): Promise<void> {
+    const rt = this.active;
+    if (!rt?.client?.isStarted) {
+      if (announceConnection) this.postConnection("disconnected");
+      return;
+    }
+    try {
+      // hydrateSessionMessages already does the get_state (and returns it), so this is a
+      // single round-trip for both the message list and the running flag.
+      const state = await this.hydrateSessionMessages(true, true);
+      this.setRunning(rt, state?.isStreaming === true);
+      if (announceConnection) this.postConnection("connected");
+    } catch {
+      if (announceConnection) this.postConnection("disconnected");
+    }
+  }
+
+  private async resync(): Promise<void> {
+    await this.syncActive(true);
+  }
+
+  // Wake / view-visible nudge: verify the active runtime's link is alive; a dead socket
+  // triggers the client's own reconnect (→ banner + resync). No-op when no active client.
+  private probeConnection(): void {
+    this.active?.client?.probe();
+  }
+
+  /** VS Code window regained focus — a cheap proxy for "the machine may have woken". */
+  onWindowFocused(): void {
+    this.probeConnection();
+  }
+
+  // Manual recovery from the disconnected banner's Retry button: rebuild the active runtime
+  // if needed and resync. ensureActiveRuntime reuses a live broker or relaunches one.
+  private async forceReconnect(): Promise<void> {
+    this.postConnection("reconnecting");
+    const rt = await this.ensureActiveRuntime();
+    if (rt?.client) await this.resync();
+    else this.postConnection("disconnected");
+  }
+
   private disposeWebviewListeners(): void {
     for (const disposable of this.webviewDisposables.splice(0)) disposable.dispose();
-  }
-
-  private disposeClientListeners(): void {
-    for (const disposable of this.clientDisposables.splice(0)) disposable.dispose();
-  }
-
-  // Nulls every client-scoped field; pair with disposeClientListeners()/dispose() at each teardown site.
-  private clearClientFields(): void {
-    this.client = undefined;
-    this.clientCwd = undefined;
-    this.activeSessionFile = undefined;
-    this.previewSessionFile = undefined;
-  }
-
-  // Synchronous client teardown: drop listeners, dispose the client, clear its fields.
-  private resetClient(): void {
-    this.disposeClientListeners();
-    this.client?.dispose();
-    this.clearClientFields();
   }
 
   private getConfiguration(): PiConfiguration {

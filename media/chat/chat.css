@@ -53,16 +53,16 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .app {
   position: relative;
   width: 100%;
-  max-width: 950px;
+  max-width: none;
   height: 100vh;
-  margin: 0 auto;
+  margin: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg);
 }
 .topbar {
   min-height: 42px;
-  padding: 8px 22px 0;
+  padding: 8px 0 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -120,7 +120,7 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .icon-button:active { transform: scale(.94); }
 .status {
   min-height: 22px;
-  padding: 0 58px 4px;
+  padding: 0 0 4px;
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
@@ -131,7 +131,7 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 34px 28px 18px;
+  padding: 34px 0 18px;
   display: flex;
   flex-direction: column;
   gap: 28px;
@@ -613,6 +613,17 @@ a:hover { text-decoration: underline; }
 }
 .history-meta { color: var(--muted); font-size: 11px; }
 .history-meta .current-tag { color: var(--accent); font-weight: 600; }
+/* Background-runtime liveness badges in the session list (reuses the cb-spin keyframe). */
+.history-badge { display: inline-flex; vertical-align: middle; }
+.history-badge.running .hb-spinner {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: cb-spin 0.8s linear infinite;
+}
+.history-badge.needs-input { color: var(--accent); font-weight: 700; }
 .history-preview {
   color: var(--subtle);
   font-size: 12px;
@@ -808,7 +819,7 @@ a:hover { text-decoration: underline; }
 .badge-prompt { color: color-mix(in srgb, var(--accent) 62%, var(--fg)); }
 
 .composer-wrap {
-  padding: 8px 18px 10px;
+  padding: 8px 0 10px;
   background: linear-gradient(to top, var(--bg) 86%, color-mix(in srgb, var(--bg) 0%, transparent));
 }
 .composer {
@@ -985,15 +996,65 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
   55% { transform: scale(1.08); }
   100% { transform: scale(1); }
 }
+/* Slim connection banner under the header. Hidden while healthy; one colored
+   tint per state. Sits in normal flow so it never overlaps the conversation. */
+.connection-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.connection-banner.reconnecting {
+  color: var(--heading);
+  border-color: color-mix(in srgb, var(--heading) 45%, var(--border));
+  background: color-mix(in srgb, var(--heading) 12%, var(--bg));
+}
+.connection-banner.connected {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  background: color-mix(in srgb, var(--success) 12%, var(--bg));
+}
+.connection-banner.disconnected {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 45%, var(--border));
+  background: color-mix(in srgb, var(--error) 12%, var(--bg));
+}
+.connection-banner .cb-icon { font-weight: 700; }
+.connection-banner .cb-spinner {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border: 2px solid color-mix(in srgb, var(--heading) 35%, transparent);
+  border-top-color: var(--heading);
+  border-radius: 50%;
+  animation: cb-spin 0.8s linear infinite;
+}
+.connection-banner .cb-retry {
+  margin-left: auto;
+  padding: 2px 10px;
+  border-radius: 5px;
+  border: 1px solid currentColor;
+  color: inherit;
+  font-size: 12px;
+}
+.connection-banner .cb-retry:hover { background: color-mix(in srgb, currentColor 16%, transparent); }
+@keyframes cb-spin { to { transform: rotate(360deg); } }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
 @media (max-width: 520px) {
   .app { max-width: none; }
-  .topbar { padding-inline: 14px; }
-  .status { padding-inline: 48px; }
-  #messages { padding: 24px 16px 14px; gap: 24px; }
-  .composer-wrap { padding: 8px 14px 10px; }
+  .topbar { padding-inline: 0; }
+  .status { padding-inline: 0; }
+  #messages { padding: 24px 0 14px; gap: 24px; }
+  .composer-wrap { padding: 8px 0 10px; }
   .message.user .bubble, .message-attachments { max-width: 88%; }
   .pill-button .optional { display: none; }
   .thinking-label { display: none; }

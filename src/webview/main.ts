@@ -12,6 +12,7 @@ import { acceptActive, closeCommandMenu, initCommandMenu, isCommandMenuOpen, mov
 import { ensureAnimating } from "./animator";
 import { piMarkHtml } from "./piMark";
 import { post } from "./bridge";
+import { updateConnectionBanner } from "./connectionBanner";
 import { initScrollControls, resetScrollFollowing } from "./scroll";
 import { appEl, titleEl, sendEl, stopEl, historyBtnEl, newSessionEl, thinkingControlEl, modelEl, inputEl, composerEl, messagesEl } from "./dom";
 import type { ExtensionToWebviewMessage } from "../protocol";
@@ -268,6 +269,9 @@ window.addEventListener("message", (event) => {
     case "running":
       setRunning(!!message.value);
       break;
+    case "connection":
+      updateConnectionBanner(message.status);
+      break;
     case "sessionMessages":
       if (message.force || state.messages.length === 0) {
         resetScrollFollowing();
@@ -328,3 +332,17 @@ updateInputState();
 render();
 if (state.running) ensureAnimating();
 post({ type: "ready", hasMessages: state.messages.length > 0, sessionFile: state.sessionFile || undefined });
+
+// Wake-from-sleep detection. A long stall between ticks means the machine was
+// suspended (timers freeze during sleep), so the broker socket is likely
+// half-open — nudge the host to verify and reconnect. Becoming visible again is
+// a second, cheaper trigger. The host's probe is a no-op when the link is fine.
+let lastWakeTick = Date.now();
+setInterval(() => {
+  const now = Date.now();
+  if (now - lastWakeTick > 30000) post({ type: "wake" });
+  lastWakeTick = now;
+}, 10000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) post({ type: "wake" });
+});

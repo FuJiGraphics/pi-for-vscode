@@ -40,6 +40,13 @@ export function toggleHistory(): void {
 function itemHtml(session: SessionListItem): string {
   const currentTag = session.isCurrent ? '<span class="current-tag">Current</span> · ' : "";
   const preview = session.preview ? '<div class="history-preview">' + escapeHtml(session.preview) + "</div>" : "";
+  // A background runtime is live on this session: needs-input (blocked on a prompt the
+  // user must answer by switching here) takes precedence over a plain running spinner.
+  const badge = session.needsInput
+    ? '<span class="history-badge needs-input" title="Waiting for your input">●</span> '
+    : session.isRunning
+    ? '<span class="history-badge running" title="Running"><span class="hb-spinner"></span></span> '
+    : "";
   return (
     '<div class="history-item' +
     (session.isCurrent ? " current" : "") +
@@ -48,6 +55,7 @@ function itemHtml(session: SessionListItem): string {
     '"><div class="history-main"><div class="history-title">' +
     escapeHtml(session.title) +
     '</div><div class="history-meta">' +
+    badge +
     currentTag +
     escapeHtml(session.meta) +
     "</div>" +
