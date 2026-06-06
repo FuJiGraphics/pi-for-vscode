@@ -1,0 +1,49 @@
+{
+  "skill_name": "grounded-implementation",
+  "substrate": "Each eval is run against a sandbox copy of the pi-for-vscode extension codebase (src/ + package.json + tsconfig.json only — no AGENTS.md/CLAUDE.md, so the skill is the only differentiator between with_skill and without_skill). The agent edits the sandbox in place; we capture the resulting git diff and grade it for codebase reuse, correct placement, and right-sized extensibility.",
+  "evals": [
+    {
+      "id": 0,
+      "name": "export-session-markdown",
+      "prompt": "지금 보고 있는 Pi 세션 대화를 마크다운 파일로 내보내는 기능 좀 추가해줘. 커맨드 팔레트에서도 실행되고, webview 헤더에도 버튼 하나 있으면 좋겠어. 저장 위치는 사용자가 고르게 해줘.",
+      "expected_output": "Reuses the existing session-reading/parsing in src/sessionStore.ts (parseSessionFile/contentToText) instead of re-parsing ~/.pi/.../*.jsonl from scratch; registers a new command via the existing extension.ts + package.json contributes.commands pattern delegating to a provider method; adds a typed variant to the WebviewToExtensionMessage union in protocol.ts for the webview button (not an ad-hoc string); puts the markdown-building logic in its own cohesive module (e.g. sessionExport.ts) rather than dumping it into extension.ts/chatViewProvider.ts; uses vscode.window.showSaveDialog; no speculative multi-format exporter framework.",
+      "assertions": [
+        "Reuses sessionStore.ts session parsing (or extends it) rather than adding fresh session-reading code elsewhere.",
+        "No reinvented JSONL parsing outside sessionStore.ts.",
+        "Command registered via the existing pattern (package.json contributes.commands + registerCommand in extension.ts delegating to a provider method).",
+        "Webview button uses a new typed variant of WebviewToExtensionMessage in protocol.ts, not an ad-hoc message.",
+        "Markdown-building logic in a cohesive module, not dumped into extension.ts / an unrelated method.",
+        "No speculative multi-format exporter framework / unused options."
+      ],
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "statusbar-broker-state",
+      "prompt": "Pi 백그라운드 broker가 지금 돌고 있는지 / 유휴(idle)인지 / 꺼졌는지 VS Code 상태바에 표시해줘. 상태바를 누르면 Pi 창이 열리고. broker가 idle 타임아웃으로 꺼지면 상태바에도 반영돼야 해.",
+      "expected_output": "Drives the status bar off existing state signals (the 'running' event already flowing to the webview, and PiRpcClient onClose/onEvent) rather than inventing a new polling timer; wires the click to the EXISTING pi-for-vscode.open command (statusBarItem.command = 'pi-for-vscode.open') instead of a duplicate open path; creates the StatusBarItem and registers it into context.subscriptions following the existing disposable pattern; keeps the status logic in one cohesive unit; no generic status-provider abstraction for a single item.",
+      "assertions": [
+        "Driven by existing state signals (running/agent events, onClose/onError/onEvent, isStarted), NOT a new setInterval/polling timer.",
+        "Click reuses the existing pi-for-vscode.open command, not a duplicate open path.",
+        "StatusBarItem created via createStatusBarItem and disposed (context.subscriptions or an owner's dispose()).",
+        "Status logic in its own cohesive unit (e.g. a new statusBar/brokerStatusBar file), not inlined into an unrelated method.",
+        "No generic status-provider/registry abstraction or config knobs for a single item."
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "model-quickpick-command",
+      "prompt": "커맨드 팔레트에서 Pi 모델을 바꿀 수 있게 해줘. webview를 안 열고도 빠르게 모델을 전환하고 싶어. 지금 webview에서 쓰는 그 모델 목록 그대로 쓰면 돼.",
+      "expected_output": "Reuses src/modelStore.ts (listPiModels/parseListModels) to fetch models instead of re-shelling 'pi --list-models' or re-implementing the parsing; reuses the existing model-switch path that the 'setModel' message handler already uses (broker respawn / set_model) instead of a parallel reimplementation; registers the command via the existing extension.ts + package.json pattern; uses vscode.window.showQuickPick; keeps logic cohesive; no speculative command/strategy abstraction.",
+      "assertions": [
+        "Reuses modelStore.ts (listPiModels/parseListModels) rather than re-shelling 'pi --list-models' or duplicating the parsing.",
+        "Reuses the existing model-switch path (the same mechanism setModel uses: broker set_model + persistence + state refresh), not a parallel reimplementation.",
+        "Command registered via the existing pattern (package.json + registerCommand in extension.ts delegating to a provider method).",
+        "Uses vscode.window.showQuickPick with logic in a cohesive provider method (mirroring sessions()), not dumped inline.",
+        "No speculative command/strategy abstraction, extra config, or unused parameters."
+      ],
+      "files": []
+    }
+  ]
+}
