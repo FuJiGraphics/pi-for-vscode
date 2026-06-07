@@ -3,6 +3,7 @@
 // Kept free of `state`/`document` so they unit-test directly (string in → string out) and so
 // adding a new tool card is a one-line registry entry. render.ts owns the DOM/paint side.
 import { escapeHtml, formatTokens, formatCost } from "./util";
+import { highlightToLines, langForPath } from "./highlight";
 import type { ActivityStep } from "./types";
 
 // Shorten a step detail for the timeline: file paths collapse to their basename,
@@ -49,13 +50,24 @@ export function stepDetail(step: ActivityStep): string {
   const t = toolName(step);
   if (t === "read" && typeof input.path === "string" && input.path) {
     const base = basename(input.path);
+    // pi's read offset is 1-based (offset:1 == line 1), so use it directly.
+    const offset = Number(input.offset);
+    const start = Number.isFinite(offset) && offset > 0 ? offset : 1;
     const limit = Number(input.limit);
-    if (Number.isFinite(limit) && limit > 0) {
-      // pi's read offset is 1-based (offset:1 == line 1), so use it directly.
-      const offset = Number(input.offset);
-      const start = Number.isFinite(offset) && offset > 0 ? offset : 1;
-      return `${base} (lines ${start}–${start + limit - 1})`;
+    const hasLimit = Number.isFinite(limit) && limit > 0;
+    const text = step.output?.text;
+    if (typeof text === "string" && text.length) {
+      // Show the ACTUAL captured range, not the requested limit (a 6-line file read with
+      // limit 50 should read "lines 1–6"). Host truncation caps display at 40 lines / 4000
+      // chars and appends a "…(truncated)" marker — when that's present the true end is
+      // unknown, so fall back to the requested limit range.
+      const lines = text.split("\n");
+      const truncated = lines[lines.length - 1] === "…(truncated)";
+      const count = Math.max((truncated ? lines.length - 1 : lines.length), 1);
+      const end = truncated && hasLimit ? start + limit - 1 : start + count - 1;
+      return `${base} (lines ${start}–${end})`;
     }
+    if (hasLimit) return `${base} (lines ${start}–${start + limit - 1})`;
     return base;
   }
   if (t === "bash" && typeof input.command === "string" && input.command) return input.command;
@@ -95,19 +107,32 @@ const READ_MAX = 40;
 const WRITE_MAX = 30;
 
 // One gutter row: a right-aligned line-number column, a +/-/space sign column, and the code.
-// `kind` drives the full-height colored band (add=green / del=red / ctx,code=neutral).
-function gutterRow(lineNo: string, sign: " " | "+" | "-", code: string, kind: "add" | "del" | "ctx" | "code"): string {
+// `codeHtml` MUST already be safe HTML — either escapeHtml(code) for plaintext or a fragment
+// from highlightToLines (Shiki output is pre-escaped). `kind` drives the full-height colored
+// band (add=green / del=red / ctx,code=neutral).
+function gutterRow(lineNo: string, sign: " " | "+" | "-", codeHtml: string, kind: "add" | "del" | "ctx" | "code"): string {
   return (
     '<div class="gl gl-' + kind + '">' +
     '<span class="ln">' + escapeHtml(lineNo) + "</span>" +
     '<span class="sg">' + (sign === " " ? "" : sign) + "</span>" +
-    '<span class="cc">' + escapeHtml(code) + "</span>" +
+    '<span class="cc">' + codeHtml + "</span>" +
     "</div>"
   );
 }
 
 function moreRow(n: number): string {
   return '<div class="diff-more">… +' + n + " more</div>";
+}
+
+// Hover-revealed control that opens the card in a full-panel scrollable overlay (see cardOverlay.ts).
+// Carries the step id so the host-side click handler can rebuild the full card body.
+function expandButton(stepId: string | undefined): string {
+  if (!stepId) return "";
+  return (
+    '<button class="tl-expand" data-action="expand-card" data-step-id="' +
+    escapeHtml(stepId) +
+    '" title="Expand" aria-label="Expand">⤢</button>'
+  );
 }
 
 // Parse pi's real edit diff (details.diff): lines are "<sign><lineNo> <content>", sign one of
@@ -126,14 +151,19 @@ function parsePiDiff(diff: string): Array<{ lineNo: string; sign: " " | "+" | "-
 // render it with TRUE file line numbers; until then render the args (oldText/newText) as a
 // sign-banded diff with no numbers (they fill in when the diff is enriched a beat later).
 export function editDiffHtml(step: ActivityStep): string {
+  // Diff lines are syntax-highlighted per-line (GitHub-style): the inline token colors override
+  // the .cc text color, while the add/del row background + sign still carry the change meaning.
+  // Per-line (not whole-block) because pi's diff lines are non-contiguous old/new versions.
+  const lang = langForPath(step.input?.path);
+  const cell = (line: string): string => highlightToLines(line, lang)?.[0] ?? escapeHtml(line);
   const realDiff = step.output?.diff;
   if (realDiff) {
     const parsed = parsePiDiff(realDiff);
     const rows = parsed
       .slice(0, DIFF_MAX)
-      .map((r) => gutterRow(r.lineNo, r.sign, r.content, r.sign === "+" ? "add" : r.sign === "-" ? "del" : "ctx"));
+      .map((r) => gutterRow(r.lineNo, r.sign, cell(r.content), r.sign === "+" ? "add" : r.sign === "-" ? "del" : "ctx"));
     if (parsed.length > DIFF_MAX) rows.push(moreRow(parsed.length - DIFF_MAX));
-    return '<div class="tl-card tl-diff">' + rows.join("") + "</div>";
+    return '<div class="tl-card tl-diff">' + expandButton(step.id) + rows.join("") + "</div>";
   }
 
   const edits = normalizeEdits(step.input || {});
@@ -144,7 +174,7 @@ export function editDiffHtml(step: ActivityStep): string {
   const push = (text: string, sign: "+" | "-", kind: "add" | "del") => {
     for (const line of text.split("\n")) {
       if (count < DIFF_MAX) {
-        rows.push(gutterRow("", sign, line, kind));
+        rows.push(gutterRow("", sign, cell(line), kind));
         count++;
       } else {
         extra++;
@@ -156,23 +186,28 @@ export function editDiffHtml(step: ActivityStep): string {
     if (edit.newText) push(edit.newText, "+", "add");
   }
   if (extra) rows.push(moreRow(extra));
-  return '<div class="tl-card tl-diff">' + rows.join("") + "</div>";
+  return '<div class="tl-card tl-diff">' + expandButton(step.id) + rows.join("") + "</div>";
 }
 
 // A line-numbered code block card (capped): file content with a gutter starting at `startLine`.
-// Shared by Write (new file, 1..N) and Read (offset..offset+N).
-function numberedCodeCard(cssClass: string, content: string, startLine: number, max: number): string {
+// Shared by Write (new file, 1..N) and Read (offset..offset+N). The whole block is tokenized
+// once via Shiki (per-line HTML); when highlighting is unavailable the line falls back to
+// escaped plaintext. `lang` is a Shiki language id ("" → plaintext).
+function numberedCodeCard(cssClass: string, content: string, startLine: number, max: number, lang: string, stepId: string | undefined): string {
   if (!content) return "";
   const lines = content.split("\n");
-  const rows = lines.slice(0, max).map((line, i) => gutterRow(String(startLine + i), " ", line, "code"));
+  const highlighted = highlightToLines(content, lang);
+  const rows = lines
+    .slice(0, max)
+    .map((line, i) => gutterRow(String(startLine + i), " ", highlighted?.[i] ?? escapeHtml(line), "code"));
   const more = lines.length > max ? moreRow(lines.length - max) : "";
-  return '<div class="tl-card ' + cssClass + '">' + rows.join("") + more + "</div>";
+  return '<div class="tl-card ' + cssClass + '">' + expandButton(stepId) + rows.join("") + more + "</div>";
 }
 
 // Write card: the file content being written, line-numbered 1..N (a new file's real lines).
 export function writePreviewHtml(step: ActivityStep): string {
   const content = typeof step.input?.content === "string" ? (step.input.content as string) : "";
-  return numberedCodeCard("tl-write", content, 1, WRITE_MAX);
+  return numberedCodeCard("tl-write", content, 1, WRITE_MAX, langForPath(step.input?.path), step.id);
 }
 
 // Read card: the fetched content with REAL line numbers from the 1-based `offset` arg. Only
@@ -182,7 +217,7 @@ export function readCardHtml(step: ActivityStep): string {
   if (!text) return "";
   const offset = Number(step.input?.offset);
   const start = Number.isFinite(offset) && offset > 0 ? offset : 1;
-  return numberedCodeCard("tl-read", text, start, READ_MAX);
+  return numberedCodeCard("tl-read", text, start, READ_MAX, langForPath(step.input?.path), step.id);
 }
 
 // Tool-card registry: maps a raw tool name to its always-visible card body. Adding a card for
@@ -194,10 +229,19 @@ const CARD_RENDERERS: Record<string, CardRenderer> = {
   read: readCardHtml,
 };
 
-/** The always-visible card body for a step's tool, or "" when the tool has none. */
+// Read-only cards (no file change) collapse by default — the row toggles them open. File-changing
+// cards (edit/write) stay always-visible since the change itself is the thing worth seeing.
+const COLLAPSIBLE_CARDS = new Set(["read"]);
+
+/** The card body for a step's tool, or "" when the tool has none. */
 export function cardFor(step: ActivityStep): string {
   const render = CARD_RENDERERS[toolName(step)];
   return render ? render(step) : "";
+}
+
+/** Whether this step's card is collapsed-by-default behind the row's expand chevron. */
+export function isCardCollapsible(step: ActivityStep): boolean {
+  return COLLAPSIBLE_CARDS.has(toolName(step));
 }
 
 // ---- todo checklist (consolidated from the turn's `todo` tool calls) ----
@@ -303,8 +347,10 @@ export interface TimelineRow {
   gen?: boolean;
   output?: { text: string; isError: boolean };
   expanded?: boolean;
-  /** Always-visible rich body (Edit diff / Write preview), rendered below the row line. */
+  /** Rich body (Edit diff / Write preview / Read content), rendered below the row line. */
   card?: string;
+  /** When true the card is collapsed by default and the row toggles it (read-only tools). */
+  cardCollapsible?: boolean;
 }
 
 // The token/cost pair inside a chip uses a vertical bar so it reads like one compact metric.
@@ -325,22 +371,26 @@ export function timelineRow(row: TimelineRow): string {
   } else if (row.time) {
     rightHtml = '<span class="tl-time">' + escapeHtml(row.time) + "</span>";
   }
-  // A finished tool with output is a clickable card: the row toggles an OUT block below it.
-  // When the row already has an always-visible card body (Edit diff / Write / Read content),
-  // that IS the output view — so skip the redundant chevron + raw OUT toggle.
+  // Two kinds of row toggle:
+  //  - generic OUTPUT (bash stdout / web result): no rich card → the row toggles a <pre> block.
+  //  - collapsible CARD (read-only tools like Read): the row toggles the rich card body.
+  // File-changing cards (Edit/Write) are non-collapsible — always visible, no chevron.
   const hasOutput = !!(row.output && row.output.text) && !row.card;
-  const chevron = hasOutput ? '<span class="tl-chevron">›</span>' : "";
-  const rowAttrs = hasOutput ? ' data-action="toggle-step" data-step-id="' + escapeHtml(row.id || "") + '"' : "";
+  const collapsibleCard = !!row.card && !!row.cardCollapsible;
+  const toggleable = hasOutput || collapsibleCard;
+  const chevron = toggleable ? '<span class="tl-chevron">›</span>' : "";
+  const rowAttrs = toggleable ? ' data-action="toggle-step" data-step-id="' + escapeHtml(row.id || "") + '"' : "";
   const outputHtml =
     hasOutput && row.expanded
       ? '<pre class="tl-output' + (row.output!.isError ? " error" : "") + '">' + escapeHtml(row.output!.text) + "</pre>"
       : "";
+  const cardHtml = row.card ? (collapsibleCard ? (row.expanded ? row.card : "") : row.card) : "";
   const cls =
-    "tl-step tl-" + row.status + (row.gen ? " tl-gen" : "") + (hasOutput ? " tl-expandable" : "") + (row.expanded ? " expanded" : "");
+    "tl-step tl-" + row.status + (row.gen ? " tl-gen" : "") + (toggleable ? " tl-expandable" : "") + (row.expanded ? " expanded" : "");
   return (
     '<div class="' + cls + '"><span class="tl-node"></span>' +
     '<span class="tl-row"' + rowAttrs + '><span class="tl-label">' + escapeHtml(row.label) + "</span>" + detailHtml + rightHtml + chevron + "</span>" +
-    (row.card || "") +
+    cardHtml +
     outputHtml +
     "</div>"
   );

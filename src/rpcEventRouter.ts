@@ -33,12 +33,22 @@ export class RpcEventRouter {
       // A just-started (e.g. brand-new) session appears / re-sorts in the history list.
       void this.sink.postSessionList();
     } else if (event.type === "agent_end") {
-      this.sink.setRunning(rt, false);
-      if (isActive) void this.sink.postState();
-      else this.sink.onBackgroundRuntimeFinished(rt);
-      void this.sink.postSessionList();
+      // willRetry: pi re-runs the SAME turn via agent.continue() (a fresh agent_start follows).
+      // Keep the runtime "running" so isRunning (which chatViewProvider.prompt reads to pick a
+      // streamingBehavior) and the history badge don't flip between retries.
+      if (!(event as { willRetry?: boolean }).willRetry) {
+        this.sink.setRunning(rt, false);
+        if (isActive) void this.sink.postState();
+        else this.sink.onBackgroundRuntimeFinished(rt);
+        void this.sink.postSessionList();
+      }
     } else if (event.type === "thinking_level_changed") {
       if (isActive) void this.sink.postState();
+    } else if (event.type === "session_info_changed") {
+      // pi changed the session title (auto-title / rename): refresh the active header + the
+      // history list so the new name shows without a manual reload.
+      if (isActive) void this.sink.postState();
+      void this.sink.postSessionList();
     }
 
     if (event.type === "extension_ui_request") {

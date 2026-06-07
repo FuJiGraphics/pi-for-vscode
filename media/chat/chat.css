@@ -145,6 +145,10 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Reserve the scrollbar lane so the session scrollbar sits pinned at the far right and never
+     shares an x with card content. (Inline cards no longer scroll, so there's no card scrollbar
+     to collide with — this keeps the session bar stable and flush right.) */
+  scrollbar-gutter: stable;
   padding: 34px 0 18px;
   display: flex;
   flex-direction: column;
@@ -587,22 +591,127 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .tl-gen .tl-node { background: var(--bg); box-shadow: 0 0 0 1.5px var(--accent); }
 .tl-gen .tl-label { color: var(--muted); }
 
-/* Always-visible rich card body below a timeline row (Edit diff, Write preview, todos). */
+/* Rich card body below a timeline row (Edit diff, Write preview, Read content, todos). */
 .tl-card {
   grid-column: 1 / -1;
   margin: 5px 0 3px;
   border-radius: 6px;
   overflow: hidden;
+  position: relative; /* anchors the ⤢ expand control */
 }
 .tl-diff, .tl-write, .tl-read {
   padding: 4px 0;
   max-height: 280px;
-  overflow: auto;
+  /* Inline cards do NOT scroll — they clip a compact preview; the ⤢ button opens a full,
+     scrollable overlay. This removes the nested-scroll trap with the session scroll entirely. */
+  overflow: hidden;
   background: var(--code-bg);
   font-family: var(--mono);
   font-size: var(--fs-code);
   line-height: 1.5;
+  transition: box-shadow 140ms ease;
 }
+/* Hover affordance: a faint Pi-accent glow + the expand control fades in. */
+.tl-card:hover {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent),
+              0 0 10px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+/* A clipped card fades at the bottom to hint "more below — expand to read it all". */
+.tl-diff.is-overflowing, .tl-write.is-overflowing, .tl-read.is-overflowing {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+}
+.tl-expand {
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--code-bg) 65%, var(--bg));
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+.tl-card:hover .tl-expand,
+.tl-expand:focus-visible { opacity: 1; }
+.tl-expand:hover { color: var(--fg); background: var(--surface-hover); }
+
+/* Full-panel card overlay (the ⤢ target): large, scrollable, highlighting + line numbers kept. */
+.card-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 4vw;
+  background: rgba(0, 0, 0, .6);
+  backdrop-filter: blur(2px);
+}
+.card-overlay-box {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 1100px);
+  max-height: 92vh;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--code-bg);
+  box-shadow: 0 24px 64px var(--shadow);
+  overflow: hidden;
+}
+.card-overlay-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--code-bg) 80%, var(--bg));
+}
+.card-overlay-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+.card-overlay-close {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: var(--fs-icon);
+}
+.card-overlay-close:hover { background: var(--surface-hover); color: var(--fg); }
+.card-overlay-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+}
+/* In the overlay the card fills the scroll area: no inline clip, glow, fade, or expand button. */
+.card-overlay .tl-card { margin: 0; border-radius: 0; box-shadow: none; }
+.card-overlay .tl-diff, .card-overlay .tl-write, .card-overlay .tl-read {
+  max-height: none;
+  overflow: visible;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.card-overlay .tl-expand { display: none; }
 /* One gutter row: [line-number] [+/- sign] [code], like Claude's diff/read cards. The whole
    row carries the add/del band (full width) so the change reads as a block, not colored text. */
 .gl {

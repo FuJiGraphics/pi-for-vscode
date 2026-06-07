@@ -433,7 +433,7 @@ export class SessionRuntimeManager {
     return {
       extraArgs: config.get<string[]>("extraArgs", []),
       persistSessions: config.get<boolean>("persistSessions", true),
-      defaultStreamingBehavior: config.get<"followUp" | "steer">("defaultStreamingBehavior", "followUp"),
+      defaultStreamingBehavior: config.get<"followUp" | "steer">("defaultStreamingBehavior", "steer"),
       brokerIdleTimeoutMinutes: config.get<number>("brokerIdleTimeoutMinutes", 30),
     };
   }

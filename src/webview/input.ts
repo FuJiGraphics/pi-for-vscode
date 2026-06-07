@@ -3,6 +3,7 @@
 import { state } from "./state";
 import { inputEl, sendEl } from "./dom";
 import { addMessage } from "./conversation";
+import { refreshSendButton } from "./render";
 import { post } from "./bridge";
 import { resetScrollFollowing } from "./scroll";
 import { consumePendingImageAttachments, getPendingImageAttachments, hasPendingImageAttachments } from "./attachments";
@@ -14,8 +15,15 @@ export function autoResizeInput(): void {
   inputEl.style.height = Math.min(inputEl.scrollHeight, 132) + "px";
 }
 
+/** True when there is nothing staged to send (no text, no pending images). */
+export function composerIsEmpty(): boolean {
+  return !inputEl.value.trim() && !hasPendingImageAttachments();
+}
+
 export function updateInputState(): void {
-  sendEl.classList.toggle("empty", !inputEl.value.trim() && !hasPendingImageAttachments());
+  // Recompute the context-aware send/stop button glyph + dim state on every composer change so
+  // typing while Pi is working flips ■ (stop) → ↑ (send) immediately.
+  refreshSendButton();
 }
 
 // Replace the composer with a chosen slash command and leave the caret after a trailing

@@ -3,6 +3,7 @@
 import { state } from "./state";
 import { scheduleRender } from "./render";
 import { ensureAnimating } from "./animator";
+import { finalizeOrPrune } from "./turnBoundary";
 import { uid } from "./util";
 import type { Activity, ActivityStep, UiImageAttachment, UiMessage, UiPrompt, UiRole } from "./types";
 
@@ -169,7 +170,7 @@ export function interruptCurrentTurn(): void {
   }
 }
 
-function findStep(stepId: string): ActivityStep | undefined {
+export function findStep(stepId: string): ActivityStep | undefined {
   for (const message of state.messages) {
     const step = message.activity?.steps.find((s) => s.id === stepId);
     if (step) return step;
@@ -215,11 +216,10 @@ function idleStatus(): string {
 export function setRunning(value: boolean): void {
   const next = !!value;
   if (next === state.running) {
+    // Idempotent "stop" (e.g. a trailing agent_end after the spinner already cleared): still
+    // finalize the current bubble so a half-typed turn settles.
     if (!next && state.currentAssistantId) {
-      const message = getMessage(state.currentAssistantId);
-      if (message && !message.text && !message.interrupted) state.messages = state.messages.filter((item) => item.id !== message.id);
-      else if (message) message.revealed = message.text.length;
-      state.currentAssistantId = null;
+      finalizeOrPrune();
       state.status = idleStatus();
     }
     scheduleRender();
@@ -234,14 +234,10 @@ export function setRunning(value: boolean): void {
     ensureAnimating();
   } else {
     state.status = idleStatus();
-    const message = state.currentAssistantId ? getMessage(state.currentAssistantId) : undefined;
-    if (message && !message.text && !message.interrupted) {
-      state.messages = state.messages.filter((item) => item.id !== message.id);
-    } else if (message) {
-      message.revealed = message.text.length;
-      if (message.activity && !message.activity.endedAt) message.activity.endedAt = Date.now();
-    }
-    state.currentAssistantId = null;
+    // Finalize the bubble; an empty one is pruned. A content-bearing bubble KEEPS its id so a
+    // retry/compaction continuation (a fresh agent_start with no user message between) reuses
+    // it. The id is cleared instead by a new prompt (submitInput) or a follow-up boundary.
+    finalizeOrPrune();
   }
   scheduleRender();
 }

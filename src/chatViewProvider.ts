@@ -12,6 +12,7 @@ import type { ImageAttachment, PiRpcMessage, WebviewToExtensionMessage } from ".
 import { getChatHtml } from "./webviewHtml";
 import { samePath } from "./workspace";
 import { readSessionFile } from "./stateHelpers";
+import { resolveActiveTheme } from "./themeResolver";
 
 const VIEW_ID = "pi-for-vscode.chat";
 
@@ -64,6 +65,8 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
       webviewView.onDidChangeVisibility(() => {
         if (webviewView.visible) this.manager.probeConnection();
       }),
+      // Keep the webview's Shiki highlighter in step with the editor's color theme.
+      vscode.window.onDidChangeActiveColorTheme(() => this.postTheme()),
     );
 
     void this.manager.postState();
@@ -72,6 +75,12 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
   async open(): Promise<void> {
     await vscode.commands.executeCommand("workbench.view.extension.pi-for-vscode");
     await vscode.commands.executeCommand(`${VIEW_ID}.focus`);
+  }
+
+  // Push the active editor theme to the webview's Shiki highlighter (best-effort JSON + kind fallback).
+  private postTheme(): void {
+    const theme = resolveActiveTheme();
+    this.presenter.postTheme(theme.theme, theme.kind);
   }
 
   // Public command entry points (extension.ts) — thin delegators to the session-CRUD unit.
@@ -117,6 +126,7 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     try {
       switch (message.type) {
         case "ready": {
+          this.postTheme();
           const rt = await this.manager.ensureActiveRuntime();
           const webviewSessionFile = message.sessionFile;
           // Resume the session the user was last viewing (Claude-style resume-from-disk):

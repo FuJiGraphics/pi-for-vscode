@@ -12,7 +12,7 @@
 import { state, save, isRenderSuppressed } from "./state";
 import { messagesEl, titleEl, thinkingControlEl, modelEl, stopEl, composerEl, sendEl, inputEl } from "./dom";
 import { escapeHtml, renderMarkdown, formatTime, formatDuration, roleLabel } from "./util";
-import { cardFor, deriveTodos, isTodoStep, stepDetail, timelineRow, tokCost, todoCardHtml } from "./cards";
+import { cardFor, deriveTodos, isCardCollapsible, isTodoStep, stepDetail, timelineRow, tokCost, todoCardHtml } from "./cards";
 import { thinkingLabel } from "./spinner";
 import { piMarkHtml } from "./piMark";
 import { pixelWordHtml } from "./pixelFont";
@@ -24,6 +24,15 @@ let renderQueued = false;
 let emptyRendered = false;
 const renderedNodes = new Map<string, HTMLElement>();
 const renderKeys = new WeakMap<HTMLElement, string>();
+
+// Bumped when the Shiki highlighter becomes ready or the theme changes. Folded into the step
+// render key (stepsSig) so the timeline nodes — whose card HTML now differs — are rebuilt; a
+// bare scheduleRender would no-op because the underlying step DATA is unchanged.
+let highlightVersion = 0;
+export function bumpHighlightVersion(): void {
+  highlightVersion++;
+  scheduleRender();
+}
 
 export function scheduleRender(): void {
   // A mutation against a background session's view: update its data only, don't render or
@@ -141,6 +150,7 @@ function stepsRowsHtml(activity: Activity): string {
       output: step.output,
       expanded: step.expanded,
       card: cardFor(step),
+      cardCollapsible: isCardCollapsible(step),
     }));
   });
   if (lastTodoIndex === -1 && todos.length > 0) {
@@ -309,7 +319,7 @@ function messageRenderKey(message: UiMessage): string {
     ? activity.steps
         .map((s) => s.id + "|" + s.status + "|" + s.label + "|" + (s.tool || "") + "|" + s.detail + "|" + (s.output ? "O" : "") + (s.expanded ? "X" : ""))
         .join(";") +
-      "#" + activity.steps.length + (activity.expanded ? "E" : "") + (activity.endedAt ? "D" : "")
+      "#" + activity.steps.length + (activity.expanded ? "E" : "") + (activity.endedAt ? "D" : "") + "@" + highlightVersion
     : "";
   return JSON.stringify({
     role: message.role,
@@ -387,6 +397,19 @@ export function paintLiveMessage(): void {
   applyLatestScroll(followLatest);
 }
 
+// The composer's send/stop control is context-aware: while Pi is working it STOPS only when the
+// composer is empty; with text or images staged it SENDS (a steer/follow-up). Called from
+// render() and from input.ts on every composer change so the glyph tracks typing immediately.
+export function refreshSendButton(): void {
+  const empty = !inputEl.value.trim() && !hasPendingImageAttachments();
+  const stopMode = state.running && empty;
+  sendEl.textContent = stopMode ? "■" : "↑";
+  sendEl.title = stopMode ? "Stop" : "Send";
+  sendEl.setAttribute("aria-label", stopMode ? "Stop" : "Send");
+  // Dim only when idle with nothing to send; a stop button (running + empty) stays active.
+  sendEl.classList.toggle("empty", !state.running && empty);
+}
+
 export function render(): void {
   const title = currentSessionTitle();
   if (!titleEl.classList.contains("editing")) {
@@ -400,10 +423,7 @@ export function render(): void {
   stopEl.disabled = true;
   stopEl.hidden = true;
   composerEl.classList.toggle("working", !!state.running);
-  sendEl.textContent = state.running ? "■" : "↑";
-  sendEl.title = state.running ? "Stop" : "Send";
-  sendEl.setAttribute("aria-label", state.running ? "Stop" : "Send");
-  sendEl.classList.toggle("empty", !state.running && !inputEl.value.trim() && !hasPendingImageAttachments());
+  refreshSendButton();
 
   const followLatest = shouldFollowLatest();
 
@@ -444,5 +464,17 @@ export function render(): void {
     }
   }
 
+  markOverflowingCards();
   applyLatestScroll(followLatest);
+}
+
+// Cards clip their (compact) preview at a max-height; flag the ones whose content overflows so
+// CSS can fade the bottom edge — a "there's more, click ⤢ to expand" hint. Read once after all
+// innerHTML writes to avoid interleaved layout reads.
+function markOverflowingCards(): void {
+  for (const node of renderedNodes.values()) {
+    node.querySelectorAll<HTMLElement>(".tl-diff, .tl-write, .tl-read").forEach((card) => {
+      card.classList.toggle("is-overflowing", card.scrollHeight > card.clientHeight + 1);
+    });
+  }
 }

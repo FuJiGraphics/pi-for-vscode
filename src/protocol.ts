@@ -37,8 +37,27 @@ export interface PiAssistantMessageDelta {
   delta?: string;
 }
 
-export interface PiAgentLifecycleEvent {
-  type: "agent_start" | "agent_end";
+export interface PiAgentStartEvent {
+  type: "agent_start";
+}
+/** `agent_end` carries `willRetry` when pi will auto-retry the just-ended run via
+ *  agent.continue() — i.e. the SAME logical turn continues in a fresh run, so the UI must
+ *  not finalize/fragment its current bubble. See agent-loop.js runAgentLoopContinue. */
+export interface PiAgentEndEvent {
+  type: "agent_end";
+  willRetry?: boolean;
+}
+/** `turn_start`/`turn_end` bracket one LLM call. A single agent run (or logical exchange)
+ *  contains MANY turns during a tool-use loop, so they are NOT bubble boundaries. */
+export interface PiTurnEvent {
+  type: "turn_start" | "turn_end";
+}
+/** `message_start`/`message_end` fire for user, assistant, AND toolResult messages — the
+ *  `message.role` discriminates. A `role:"user"` `message_start` is the boundary of a new
+ *  logical exchange (initial prompt, steering, or follow-up). See agent-loop.js L50-52,95-98. */
+export interface PiMessageStartEvent {
+  type: "message_start";
+  message?: PiMessage;
 }
 export interface PiMessageUpdateEvent {
   type: "message_update";
@@ -68,6 +87,19 @@ export interface PiCompactionEvent {
 export interface PiExtensionErrorEvent {
   type: "extension_error";
   error?: string;
+}
+/** pi auto-retries a transient provider failure INSIDE the same logical turn (it re-emits
+ *  agent_start via agent.continue()), so the UI shows progress without starting a new bubble. */
+export interface PiAutoRetryEvent {
+  type: "auto_retry_start" | "auto_retry_end";
+  attempt?: number;
+  maxAttempts?: number;
+  errorMessage?: string;
+}
+/** The session's display name changed (pi auto-title or an explicit rename). */
+export interface PiSessionInfoChangedEvent {
+  type: "session_info_changed";
+  name?: string;
 }
 
 /** Envelope every `request()` resolves with (built by the broker / forwarded from pi). */
@@ -180,5 +212,9 @@ export type ExtensionToWebviewMessage =
   | { type: "sessionList"; sessions: SessionListItem[] }
   | { type: "modelList"; models: ModelListItem[] }
   | { type: "commandList"; commands: CommandListItem[] }
+  // The active VS Code editor theme, so the webview's Shiki highlighter tracks the editor. `theme`
+  // is the resolved VS Code theme JSON (tokenColors etc.) when the host could read it; `kind`
+  // always selects a bundled fallback theme. Re-sent on theme change.
+  | { type: "theme"; theme?: unknown; kind: "light" | "dark" | "highContrast" | "highContrastLight" }
   // Drives the slim connection banner under the header. "connected" auto-hides.
   | { type: "connection"; status: "reconnecting" | "connected" | "disconnected" };

@@ -1,10 +1,13 @@
 // Webview entry point: wires DOM events, routes inbound extension messages to
 // the appropriate handler, and performs the initial render.
 import { state, withSession, activateSession, dropSession, adoptPersistedView, consumeRestored } from "./state";
-import { currentSessionTitle, render, scheduleRender } from "./render";
-import { addMessage, getMessage, setRunning, hydrateSessionMessages, interruptCurrentTurn, recordToolOutput, toggleActivityStep } from "./conversation";
+import { currentSessionTitle, render, scheduleRender, bumpHighlightVersion } from "./render";
+import { addMessage, getMessage, setRunning, hydrateSessionMessages, interruptCurrentTurn, recordToolOutput, toggleActivityStep, findStep } from "./conversation";
 import { handleRpcEvent, handleExtensionUiRequest, handleStderr } from "./handlers";
-import { submitInput, autoResizeInput, updateInputState } from "./input";
+import { showCardOverlay } from "./cardOverlay";
+import { initHighlighter, setHighlightNotifier, setTheme } from "./highlight";
+import { initWakeDetection } from "./wake";
+import { submitInput, autoResizeInput, updateInputState, composerIsEmpty } from "./input";
 import { initImageAttachments, showImagePreview } from "./attachments";
 import { closeHistory, toggleHistory, renderSessionList, initHistory } from "./history";
 import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker } from "./modelPicker";
@@ -42,7 +45,10 @@ function mountBootSplash(): void {
 }
 
 sendEl.addEventListener("click", () => {
-  if (state.running) {
+  // Context-aware while Pi is working: an EMPTY composer stops the turn; a non-empty one SENDS
+  // it (a steer/follow-up — pi keeps the run going). Enter always sends (keydown handler below),
+  // so a typed message is never lost to an accidental stop. Idle: always send.
+  if (state.running && composerIsEmpty()) {
     interruptCurrentTurn();
     setRunning(false);
     post({ type: "abort" });
@@ -227,6 +233,12 @@ messagesEl.addEventListener("click", (event) => {
     if (stepId) toggleActivityStep(stepId);
     return;
   }
+  if (action === "expand-card") {
+    const stepId = actionEl.dataset.stepId;
+    const step = stepId ? findStep(stepId) : undefined;
+    if (step) showCardOverlay(step);
+    return;
+  }
   if (action === "preview-image" && message) {
     const index = Number(actionEl.dataset.index);
     const attachment = Number.isInteger(index) ? message.attachments?.[index] : undefined;
@@ -355,6 +367,7 @@ const inbound: InboundTable = {
   sessionList: (m) => renderSessionList(m.sessions),
   commandList: (m) => renderCommandList(m.commands),
   modelList: (m) => renderModelList(m.models),
+  theme: (m) => setTheme(m.theme, m.kind),
 };
 
 window.addEventListener("message", (event) => {
@@ -372,6 +385,9 @@ initImageAttachments(() => {
   updateInputState();
 });
 initScrollControls();
+// Wire Shiki: re-render cards once the highlighter/theme is ready (bumps the render key).
+setHighlightNotifier(bumpHighlightVersion);
+void initHighlighter();
 mountBootSplash();
 autoResizeInput();
 updateInputState();
@@ -379,16 +395,4 @@ render();
 if (state.running) ensureAnimating();
 post({ type: "ready", hasMessages: state.messages.length > 0, sessionFile: state.sessionFile || undefined });
 
-// Wake-from-sleep detection. A long stall between ticks means the machine was
-// suspended (timers freeze during sleep), so the broker socket is likely
-// half-open — nudge the host to verify and reconnect. Becoming visible again is
-// a second, cheaper trigger. The host's probe is a no-op when the link is fine.
-let lastWakeTick = Date.now();
-setInterval(() => {
-  const now = Date.now();
-  if (now - lastWakeTick > 30000) post({ type: "wake" });
-  lastWakeTick = now;
-}, 10000);
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) post({ type: "wake" });
-});
+initWakeDetection();

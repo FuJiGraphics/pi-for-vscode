@@ -35,4 +35,8 @@ export class WebviewPresenter {
   postConnection(status: "reconnecting" | "connected" | "disconnected"): void {
     this.post({ type: "connection", status });
   }
+
+  postTheme(theme: unknown, kind: "light" | "dark" | "highContrast" | "highContrastLight"): void {
+    this.post({ type: "theme", theme, kind });
+  }
 }

@@ -15,6 +15,7 @@ import {
   summarizeArgs,
   textFromContent,
 } from "./conversation";
+import { closeExchangeBoundary } from "./turnBoundary";
 import { inputEl } from "./dom";
 import { post } from "./bridge";
 import { flashConnectionNotice } from "./connectionBanner";
@@ -51,10 +52,28 @@ const TRANSIENT_DISCONNECT_RE = /idle timeout|websocket|connection|disconnect|ec
 export function handleRpcEvent(event: any): void {
   switch (event.type) {
     case "agent_start":
+      // A fresh run: usually a new prompt (currentAssistantId already nulled by submitInput's
+      // idle-reset → new bubble), or a retry/compaction continuation (id still alive → the same
+      // bubble is reused). setRunning(true)→ensureActivity()→ensureAssistant() handles both.
       setRunning(true);
       break;
     case "agent_end":
-      setRunning(false);
+      // willRetry: pi will re-run this SAME logical turn via agent.continue() (a fresh
+      // agent_start follows). Don't finalize/clear the bubble or the retry fragments into a new
+      // one — keep running so the spinner stays and the bubble is reused.
+      if (!event.willRetry) setRunning(false);
+      break;
+    case "turn_start":
+    case "turn_end":
+      // One LLM call within a run. NOT an exchange boundary (a tool-use loop emits many turns
+      // per user message), so the bubble is unaffected — intentional no-op.
+      break;
+    case "message_start":
+      // pi emits message_start for user, assistant, AND toolResult messages. A `user` one marks
+      // a new logical exchange (steering / follow-up / the initial prompt): close out the
+      // current bubble so the reply opens a fresh one below the (locally-added) user message.
+      // assistant/toolResult message_start are no-ops (text/steps arrive via the events below).
+      if (event.message?.role === "user") closeExchangeBoundary();
       break;
     case "message_update": {
       if (!state.running) break;
@@ -134,6 +153,24 @@ export function handleRpcEvent(event: any): void {
         event.errorMessage || "",
         event.errorMessage ? "error" : "done",
       );
+      break;
+    case "auto_retry_start": {
+      // A transient provider failure inside the current turn — pi retries automatically (a fresh
+      // agent_start follows). Show it as a live timeline step on the SAME bubble so the spinner
+      // reads as "still working" rather than stalled. (No `running` guard: agent_end{willRetry}
+      // already kept us running, but be defensive — the bubble must exist.)
+      const attempt = typeof event.attempt === "number" ? event.attempt : undefined;
+      const max = typeof event.maxAttempts === "number" ? event.maxAttempts : undefined;
+      const detail = attempt && max ? `attempt ${attempt}/${max}` : "";
+      recordActivity("auto-retry", "Retrying", detail, "running");
+      break;
+    }
+    case "auto_retry_end":
+      recordActivity("auto-retry", event.success === false ? "Retry failed" : "Retried", "", event.success === false ? "error" : "done");
+      break;
+    case "session_info_changed":
+      // The session title changed (pi auto-title / rename). The webview's title comes from the
+      // host's `state` post; the host reacts to this event (rpcEventRouter) — webview no-op.
       break;
     case "extension_error":
       addMessage("system", "Extension error: " + (event.error || "unknown"), { error: true });

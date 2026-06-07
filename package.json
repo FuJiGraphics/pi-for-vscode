@@ -129,8 +129,8 @@
             "followUp",
             "steer"
           ],
-          "default": "followUp",
-          "description": "How prompts sent while Pi is already running should be queued."
+          "default": "steer",
+          "description": "How a message sent while Pi is already working is delivered: \"steer\" injects it into the running task before the next model call (interject); \"followUp\" queues it to be answered after the current task finishes."
         },
         "pi-for-vscode.openOnStartup": {
           "type": "boolean",
@@ -171,10 +171,15 @@
     "package:all": "node scripts/package-all.mjs"
   },
   "devDependencies": {
+    "@shikijs/engine-javascript": "^3.0.0",
+    "@shikijs/langs": "^3.0.0",
+    "@shikijs/themes": "^3.0.0",
+    "@shikijs/types": "^3.0.0",
     "@types/node": "^20.17.0",
     "@types/vscode": "^1.94.0",
     "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.28.0",
+    "shiki": "^3.0.0",
     "tsx": "^4.22.4",
     "typescript": "^5.6.0"
   }
