@@ -64,8 +64,10 @@ export async function listPiSessions(options: {
 
   const scopedSummaries = options.cwd ? summaries.filter((summary) => summary.isCurrentWorkspace) : summaries;
 
+  // Stable newest-first. Do NOT float the current session to the top — that made the
+  // list reshuffle every time you switched sessions. The current session keeps its
+  // "Current" badge in its chronological (most-recently-updated) place.
   scopedSummaries.sort((a, b) => {
-    if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
     if (a.isCurrentWorkspace !== b.isCurrentWorkspace) return a.isCurrentWorkspace ? -1 : 1;
     return b.updatedAt - a.updatedAt;
   });
@@ -176,6 +178,67 @@ export async function readPiSessionMessages(filePath: string): Promise<unknown[]
   }
 
   return messages;
+}
+
+// Pull a finished tool's output (bash stdout, read content, web result) from the session
+// file. The live RPC stream carries only tool INPUT, so the webview enriches a finished step
+// with this. Tail-reads the file (the result lands near the end right after the tool ran) so
+// it stays cheap even for long sessions.
+// pi records a finished tool's user-facing message in `content`, and (for edit) the real
+// line-numbered unified diff in `details` — surface both so the webview can show a true diff.
+export interface ToolResult {
+  text: string;
+  isError: boolean;
+  diff?: string;
+  firstChangedLine?: number;
+}
+
+export async function readToolResult(filePath: string, toolCallId: string): Promise<ToolResult | undefined> {
+  let stat: { size: number };
+  try {
+    stat = await fs.stat(filePath);
+  } catch {
+    return undefined;
+  }
+  const CAP = 512 * 1024;
+  const start = Math.max(0, stat.size - CAP);
+  let handle: import("node:fs/promises").FileHandle | undefined;
+  try {
+    handle = await fs.open(filePath, "r");
+    const length = stat.size - start;
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, start);
+    let text = buffer.toString("utf8");
+    if (start > 0) {
+      const nl = text.indexOf("\n");
+      if (nl >= 0) text = text.slice(nl + 1); // drop a partial first line from the tail cut
+    }
+    const lines = text.split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      let entry: SessionEntry & {
+        message?: { role?: string; toolCallId?: string; content?: unknown; isError?: boolean; details?: unknown };
+      };
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const m = entry.message;
+      if (entry.type === "message" && m && m.role === "toolResult" && m.toolCallId === toolCallId) {
+        const details = m.details && typeof m.details === "object" ? (m.details as Record<string, unknown>) : undefined;
+        const diff = typeof details?.diff === "string" ? details.diff : undefined;
+        const firstChangedLine = typeof details?.firstChangedLine === "number" ? details.firstChangedLine : undefined;
+        return { text: contentToText(m.content), isError: !!m.isError, diff, firstChangedLine };
+      }
+    }
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+  return undefined;
 }
 
 function parseSessionEntries(text: string): SessionEntry[] {

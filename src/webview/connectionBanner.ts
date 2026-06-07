@@ -3,6 +3,7 @@
 // recovery (auto-hides), and offers a Retry on terminal "Disconnected".
 import { post } from "./bridge";
 import { connectionBannerEl as el } from "./dom";
+import { escapeHtml } from "./util";
 
 let hideTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -36,6 +37,22 @@ export function updateConnectionBanner(status: ConnectionStatus): void {
     '<span class="cb-icon" aria-hidden="true">⚠</span><span>Disconnected</span>' +
     '<button type="button" class="cb-retry">Retry</button>';
   el.hidden = false;
+}
+
+// A brief, auto-hiding warning notice (not a transport state). Used for pi's upstream
+// provider drops, which interrupt a turn but leave the host↔broker link healthy — so we
+// surface them here instead of injecting a message into the conversation.
+export function flashConnectionNotice(text: string, ms = 5000): void {
+  if (hideTimer) {
+    clearTimeout(hideTimer);
+    hideTimer = undefined;
+  }
+  el.className = "connection-banner notice";
+  el.innerHTML = '<span class="cb-icon" aria-hidden="true">⚠</span><span>' + escapeHtml(text) + "</span>";
+  el.hidden = false;
+  hideTimer = setTimeout(() => {
+    el.hidden = true;
+  }, ms);
 }
 
 el.addEventListener("click", (event) => {

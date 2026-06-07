@@ -10,12 +10,14 @@ import {
   ensureAssistant,
   prettifyToolName,
   recordActivity,
+  recordUsage,
   setRunning,
   summarizeArgs,
   textFromContent,
 } from "./conversation";
 import { inputEl } from "./dom";
 import { post } from "./bridge";
+import { flashConnectionNotice } from "./connectionBanner";
 import { ensureAnimating } from "./animator";
 import { autoResizeInput, updateInputState } from "./input";
 
@@ -64,19 +66,21 @@ export function handleRpcEvent(event: any): void {
       if (!state.running) break;
       const message = event.message;
       if (message && message.role === "assistant") {
+        // Token/cost usage rides on the assistant message — accumulate it for display.
+        recordUsage(message.usage);
         // A turn can end in an error (e.g. provider/model/auth rejection) with no
-        // content. Surface it instead of silently showing nothing. A transient
-        // transport drop (sleep idle-timeout) is softened — the connection banner
-        // owns the recovery story — and either way clear `running` here so the
-        // spinner can't stick if the trailing agent_end was lost on a dead socket.
+        // content. A transient provider drop (sleep idle-timeout / websocket) is NOT a
+        // real failure, so we surface it as a brief, auto-hiding banner notice instead of
+        // cluttering the conversation; real errors still post to the chat. Either way we
+        // clear `running` so the spinner can't stick if the trailing agent_end was lost.
         if (message.errorMessage) {
           const text = formatTurnError(message.errorMessage);
           const transient = TRANSIENT_DISCONNECT_RE.test(text);
-          addMessage(
-            "system",
-            transient ? `Connection dropped, so this turn was interrupted — you can continue once it reconnects. (${text})` : text,
-            { error: !transient },
-          );
+          if (transient) {
+            flashConnectionNotice("Connection interrupted — the turn was paused. Continue when ready.");
+          } else {
+            addMessage("system", text, { error: true });
+          }
           setRunning(false);
           break;
         }
@@ -95,7 +99,14 @@ export function handleRpcEvent(event: any): void {
     }
     case "tool_execution_start":
       if (!state.running) break;
-      recordActivity(event.toolCallId, prettifyToolName(event.toolName), summarizeArgs(event.args), "running");
+      recordActivity(
+        event.toolCallId,
+        prettifyToolName(event.toolName),
+        summarizeArgs(event.args),
+        "running",
+        event.args && typeof event.args === "object" ? (event.args as Record<string, unknown>) : undefined,
+        typeof event.toolName === "string" ? event.toolName : undefined,
+      );
       break;
     case "tool_execution_update":
       if (!state.running) break;
@@ -137,8 +148,8 @@ export function handleExtensionUiRequest(request: any): void {
     return;
   }
   if (method === "setStatus") {
-    state.status = request.statusText || (state.running ? "Pi is working" : "");
-    scheduleRender();
+    // The status subtitle under the title was removed — there's no surface for this,
+    // and we never want a "Pi is working" filler. Intentionally ignored.
     return;
   }
   if (method === "setTitle") return;

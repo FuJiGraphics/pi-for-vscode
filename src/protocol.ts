@@ -157,15 +157,26 @@ export type WebviewToExtensionMessage =
   | { type: "reconnect" }
   | { type: "extensionUiResponse"; response: unknown };
 
+// Per-session messages carry `sessionId` (the host runtime id) so the webview can keep a
+// separate view per session and apply background sessions' events to their own view —
+// switching is then a pure in-memory swap (`activate`) with no re-fetch, preserving each
+// session's full conversation + activity timeline.
 export type ExtensionToWebviewMessage =
-  | { type: "rpcEvent"; event: PiRpcMessage }
+  | { type: "rpcEvent"; sessionId: string; event: PiRpcMessage }
+  // Tool output (bash stdout, read content, web results) read from the session file after a
+  // tool finishes — the live RPC stream carries only tool INPUT, so outputs are enriched here.
+  | { type: "toolOutput"; sessionId: string; toolCallId: string; text: string; isError: boolean; diff?: string; firstChangedLine?: number }
   | { type: "extensionUiRequest"; request: PiRpcMessage }
   | { type: "system"; text: string }
   | { type: "stderr"; text: string }
-  | { type: "running"; value: boolean }
+  | { type: "running"; sessionId: string; value: boolean }
   | { type: "reset" }
-  | { type: "state"; state: unknown }
-  | { type: "sessionMessages"; messages: unknown[]; force?: boolean }
+  | { type: "state"; sessionId: string; state: unknown }
+  | { type: "sessionMessages"; sessionId: string; messages: unknown[]; force?: boolean }
+  // Make `sessionId` the visible session (instant swap to its cached view).
+  | { type: "activate"; sessionId: string }
+  // Forget a session's cached view (its runtime was fully reaped/deleted).
+  | { type: "dropSession"; sessionId: string }
   | { type: "sessionList"; sessions: SessionListItem[] }
   | { type: "modelList"; models: ModelListItem[] }
   | { type: "commandList"; commands: CommandListItem[] }

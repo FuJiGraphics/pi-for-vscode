@@ -9,15 +9,16 @@
 //                       activity block or buttons. Driven by the animator loop.
 // This split is what keeps hover/toggle stable: the activity DOM is never rebuilt
 // at 60fps, so :hover state and click targets survive.
-import { state, save } from "./state";
-import { messagesEl, statusEl, titleEl, thinkingControlEl, modelEl, stopEl, composerEl, sendEl, inputEl } from "./dom";
+import { state, save, isRenderSuppressed } from "./state";
+import { messagesEl, titleEl, thinkingControlEl, modelEl, stopEl, composerEl, sendEl, inputEl } from "./dom";
 import { escapeHtml, renderMarkdown, formatTime, formatDuration, roleLabel } from "./util";
+import { cardFor, deriveTodos, isTodoStep, stepDetail, timelineRow, tokCost, todoCardHtml } from "./cards";
 import { thinkingLabel } from "./spinner";
 import { piMarkHtml } from "./piMark";
 import { pixelWordHtml } from "./pixelFont";
 import { applyLatestScroll, shouldFollowLatest } from "./scroll";
 import { hasPendingImageAttachments, imageDataUrl, imageMeta } from "./attachments";
-import type { ActivityStep, UiImageAttachment, UiMessage } from "./types";
+import type { Activity, ActivityStep, UiImageAttachment, UiMessage } from "./types";
 
 let renderQueued = false;
 let emptyRendered = false;
@@ -25,6 +26,9 @@ const renderedNodes = new Map<string, HTMLElement>();
 const renderKeys = new WeakMap<HTMLElement, string>();
 
 export function scheduleRender(): void {
+  // A mutation against a background session's view: update its data only, don't render or
+  // persist the active view. The background view renders later when it's activated.
+  if (isRenderSuppressed()) return;
   save();
   if (renderQueued) return;
   renderQueued = true;
@@ -99,24 +103,59 @@ function renderThinkingControl(): void {
 
 // ---- assistant status line (spinner / working / done), single coherent line ----
 
-function stepsRowsHtml(steps: ActivityStep[]): string {
-  if (!steps.length) return '<div class="activity-step"><span class="bullet">•</span><span>Preparing context</span></div>';
-  return steps
-    .slice(-8)
-    .map(
-      (step) =>
-        '<div class="activity-step"><span class="bullet">' +
-        (step.status === "error" ? "×" : "•") +
-        '</span><span>' +
-        escapeHtml(step.label) +
-        (step.detail ? " · " + escapeHtml(step.detail) : "") +
-        "</span></div>",
-    )
-    .join("");
+const SEP = " · ";
+
+function stepsRowsHtml(activity: Activity): string {
+  const steps = activity.steps;
+  const rows: string[] = [];
+  // Lead "Thought for Xs" node — the time spent before the first step ran (Claude-style).
+  const firstStart = steps.length ? steps[0].startedAt : activity.endedAt || Date.now();
+  if (firstStart - activity.startedAt >= 1500) {
+    rows.push(timelineRow({ status: "done", label: "Thought for " + formatDuration(activity.startedAt, firstStart) }));
+  }
+  if (!steps.length) {
+    if (rows.length === 0) rows.push(timelineRow({ status: "running", label: "Preparing context" }));
+    return rows.join("");
+  }
+  const visible = steps.slice(-16);
+  // All `todo` calls collapse into ONE consolidated checklist (Claude-style), folded ONCE
+  // here and rendered at the position of the most recent todo step; if every todo step
+  // scrolled out of the visible window but todos still exist, the card is appended at the end.
+  const todos = steps.some(isTodoStep) ? deriveTodos(steps) : [];
+  let lastTodoIndex = -1;
+  for (let i = 0; i < visible.length; i++) if (isTodoStep(visible[i])) lastTodoIndex = i;
+  visible.forEach((step, index) => {
+    if (isTodoStep(step)) {
+      if (index === lastTodoIndex) rows.push(todoCardHtml(todos));
+      return;
+    }
+    rows.push(timelineRow({
+      id: step.id,
+      status: step.status,
+      label: step.label,
+      detail: stepDetail(step),
+      time: step.endedAt ? formatDuration(step.startedAt, step.endedAt) : "",
+      tokens: step.tokens,
+      cost: step.cost,
+      gen: step.kind === "generation",
+      output: step.output,
+      expanded: step.expanded,
+      card: cardFor(step),
+    }));
+  });
+  if (lastTodoIndex === -1 && todos.length > 0) {
+    rows.push(todoCardHtml(todos));
+  }
+  return rows.join("");
+}
+
+// Turn-total usage "5.3k tokens | $0.03" — no leading separator; the header joins fragments.
+function usageChip(message: UiMessage): string {
+  return message.tokens ? tokCost(message.tokens, message.cost) : "";
 }
 
 function statusHeaderInner(message: UiMessage, mode: "spinner" | "working" | "done", steps: ActivityStep[]): string {
-  const stepCount = steps.length ? " · " + steps.length + " step" + (steps.length > 1 ? "s" : "") : "";
+  const stepCount = steps.length ? steps.length + " step" + (steps.length > 1 ? "s" : "") : "";
   if (mode === "spinner") {
     const { word, seconds } = thinkingLabel(message.createdAt);
     return (
@@ -136,10 +175,13 @@ function statusHeaderInner(message: UiMessage, mode: "spinner" | "working" | "do
     mode === "working"
       ? "Working"
       : "Worked for " + formatDuration(message.activity?.startedAt, message.activity?.endedAt);
-  return dot + "<span>" + escapeHtml(label + stepCount) + "</span>";
+  // Join the present fragments with one middot rather than baking a leading " · " into each.
+  return dot + "<span>" + escapeHtml([label, stepCount, usageChip(message)].filter(Boolean).join(SEP)) + "</span>";
 }
 
-function statusBlock(message: UiMessage, mode: "spinner" | "working" | "done", steps: ActivityStep[], expanded: boolean): string {
+function statusBlock(message: UiMessage, mode: "spinner" | "working" | "done", expanded: boolean): string {
+  const activity = message.activity;
+  const steps = activity?.steps ?? [];
   const hasSteps = steps.length > 0;
   const classes = "activity status-line" + (mode === "spinner" ? " spinner" : "") + (expanded ? " expanded" : "");
   const inner = statusHeaderInner(message, mode, steps);
@@ -148,7 +190,7 @@ function statusBlock(message: UiMessage, mode: "spinner" | "working" | "done", s
     ? '<button class="activity-toggle" data-action="toggle-activity" data-id="' + message.id + '">'
     : '<div class="activity-toggle static">';
   const close = hasSteps ? "</button>" : "</div>";
-  const details = hasSteps ? '<div class="activity-details">' + stepsRowsHtml(steps) + "</div>" : "";
+  const details = hasSteps && activity ? '<div class="activity-details">' + stepsRowsHtml(activity) + "</div>" : "";
   return '<div class="' + classes + '" data-activity-id="' + message.id + '">' + open + inner + chevron + close + details + "</div>";
 }
 
@@ -157,10 +199,12 @@ function assistantStatusHtml(message: UiMessage): string {
   const activity = message.activity;
   const steps = activity?.steps ?? [];
 
-  if (active && !message.text) return statusBlock(message, "spinner", steps, !!activity?.expanded);
+  // While the turn is active the timeline stays expanded so progress reads as a live
+  // connected graph; once done it collapses (respecting the user's manual toggle).
+  if (active && !message.text) return statusBlock(message, "spinner", true);
   if (!activity) return "";
   if (active && steps.length === 0) return ""; // streaming text with no tools → no header line
-  return statusBlock(message, active ? "working" : "done", steps, !!activity.expanded);
+  return statusBlock(message, active ? "working" : "done", active ? true : !!activity.expanded);
 }
 
 function assistantActions(message: UiMessage): string {
@@ -170,6 +214,11 @@ function assistantActions(message: UiMessage): string {
     message.id +
     '" title="Copy">⧉</button><button title="Helpful">♡</button><button title="Not helpful">♧</button><button title="Open">↗</button></div>'
   );
+}
+
+// Inline "Interrupted" marker below a turn that was cut off (Stop / VS Code closed).
+function interruptedLine(message: UiMessage): string {
+  return message.interrupted ? '<div class="interrupted-line">Interrupted</div>' : "";
 }
 
 function uiHtml(message: UiMessage): string {
@@ -244,7 +293,7 @@ function messageHtml(message: UiMessage): string {
     );
   }
   if (message.role === "assistant") {
-    return assistantStatusHtml(message) + assistantBody(message) + assistantActions(message);
+    return assistantStatusHtml(message) + assistantBody(message) + assistantActions(message) + interruptedLine(message);
   }
   return '<div class="role">' + escapeHtml(roleLabel(message.role)) + "</div>" + staticBody(message) + uiHtml(message);
 }
@@ -257,7 +306,9 @@ function messageRenderKey(message: UiMessage): string {
   const active = isActive(message);
   const activity = message.activity;
   const stepsSig = activity
-    ? activity.steps.map((s) => s.id + "|" + s.status + "|" + s.label + "|" + s.detail).join(";") +
+    ? activity.steps
+        .map((s) => s.id + "|" + s.status + "|" + s.label + "|" + (s.tool || "") + "|" + s.detail + "|" + (s.output ? "O" : "") + (s.expanded ? "X" : ""))
+        .join(";") +
       "#" + activity.steps.length + (activity.expanded ? "E" : "") + (activity.endedAt ? "D" : "")
     : "";
   return JSON.stringify({
@@ -267,6 +318,8 @@ function messageRenderKey(message: UiMessage): string {
     hasText: message.text.length > 0,
     live: active,
     stepsSig,
+    tokens: message.tokens || 0,
+    interrupted: !!message.interrupted,
     ui: message.ui ? message.ui.kind + (message.ui.resolved ? "R" : "") : "",
     attachments: (message.attachments || []).map((attachment) => attachment.id + "|" + attachment.name).join(";"),
     text: message.role === "assistant" ? "" : message.text,
@@ -340,17 +393,17 @@ export function render(): void {
     titleEl.textContent = title;
     titleEl.title = title;
   }
-  const statusText = state.status || (state.running ? "Pi is working" : "");
-  statusEl.textContent = statusText;
-  statusEl.hidden = !statusText;
+  // (No status subtitle under the title — removed. Run state shows in the activity
+  // timeline; "Interrupted" is rendered inline below the cut-off turn, not as a banner.)
   renderThinkingControl();
   modelEl.textContent = (state.modelLabel || "Pi") + "⌄";
-  stopEl.disabled = !state.running;
-  stopEl.hidden = !state.running;
+  stopEl.disabled = true;
+  stopEl.hidden = true;
   composerEl.classList.toggle("working", !!state.running);
-  sendEl.textContent = state.running ? "↪" : "↑";
-  sendEl.title = state.running ? "Queue follow-up" : "Send";
-  sendEl.classList.toggle("empty", !inputEl.value.trim() && !hasPendingImageAttachments());
+  sendEl.textContent = state.running ? "■" : "↑";
+  sendEl.title = state.running ? "Stop" : "Send";
+  sendEl.setAttribute("aria-label", state.running ? "Stop" : "Send");
+  sendEl.classList.toggle("empty", !state.running && !inputEl.value.trim() && !hasPendingImageAttachments());
 
   const followLatest = shouldFollowLatest();
 

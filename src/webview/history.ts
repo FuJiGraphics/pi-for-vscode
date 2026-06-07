@@ -38,8 +38,9 @@ export function toggleHistory(): void {
 }
 
 function itemHtml(session: SessionListItem): string {
-  const currentTag = session.isCurrent ? '<span class="current-tag">Current</span> · ' : "";
-  const preview = session.preview ? '<div class="history-preview">' + escapeHtml(session.preview) + "</div>" : "";
+  // The trailing middot is gone — .current-tag carries its own right-margin so it can't
+  // collide with the needs-input / running badges that share the meta line.
+  const currentTag = session.isCurrent ? '<span class="current-tag">Current</span>' : "";
   // A background runtime is live on this session: needs-input (blocked on a prompt the
   // user must answer by switching here) takes precedence over a plain running spinner.
   const badge = session.needsInput
@@ -47,6 +48,8 @@ function itemHtml(session: SessionListItem): string {
     : session.isRunning
     ? '<span class="history-badge running" title="Running"><span class="hb-spinner"></span></span> '
     : "";
+  // No conversation-content preview line here — it made the list noisy. The title
+  // (session name / first user message) + meta is enough; preview still feeds search below.
   return (
     '<div class="history-item' +
     (session.isCurrent ? " current" : "") +
@@ -59,7 +62,6 @@ function itemHtml(session: SessionListItem): string {
     currentTag +
     escapeHtml(session.meta) +
     "</div>" +
-    preview +
     '</div><div class="history-actions">' +
     '<button class="history-action rename" data-action="rename" title="Rename" aria-label="Rename">' +
     PENCIL_ICON +

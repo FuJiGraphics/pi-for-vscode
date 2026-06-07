@@ -18,8 +18,15 @@ export function openModelPicker(): void {
   appEl.classList.remove("command-open"); // and with the slash-command palette
   appEl.classList.add("model-open");
   modelSearchEl.value = "";
-  modelListEl.innerHTML = '<div class="model-empty">Loading models…</div>';
-  post({ type: "requestModels" });
+  // Cache models across opens (mirrors commandMenu's `loaded` pattern): only show the
+  // loading state + request `pi --list-models` the first time. Subsequent opens render
+  // the cached list instantly, so the picker no longer flashes "Loading…" every time.
+  if (allModels.length > 0) {
+    applyFilter();
+  } else {
+    modelListEl.innerHTML = '<div class="model-empty">Loading models…</div>';
+    post({ type: "requestModels" });
+  }
   modelSearchEl.focus();
 }
 
@@ -48,7 +55,7 @@ function itemHtml(model: ModelListItem): string {
     (model.isCurrent ? '<span class="current-tag"> ✓</span>' : "") +
     '</div><div class="model-meta">' +
     escapeHtml(model.provider) +
-    (model.thinking ? " · thinking" : "") +
+    (model.thinking ? '<span class="model-cap">thinking</span>' : "") +
     "</div></div></button>"
   );
 }
@@ -87,6 +94,9 @@ function handleListClick(event: MouseEvent): void {
   if (!item) return;
   const id = item.dataset.id;
   if (!id) return;
+  // Move the ✓ marker to the picked model locally so the cached list stays accurate
+  // without a re-fetch on the next open (the host doesn't re-send the list after setModel).
+  allModels = allModels.map((m) => ({ ...m, isCurrent: m.id === id }));
   post({ type: "setModel", modelId: id });
   closeModelPicker();
 }

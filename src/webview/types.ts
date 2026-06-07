@@ -17,6 +17,22 @@ export interface ActivityStep {
   status: "running" | "done" | "error";
   startedAt: number;
   endedAt?: number;
+  /** Set on a generation checkpoint node: tokens/cost that model call spent. */
+  tokens?: number;
+  cost?: number;
+  /** Marks a model-generation checkpoint (vs a tool step) for distinct rendering. */
+  kind?: "generation";
+  /** Raw pi tool name (e.g. "edit", "write", "web_search", "todo") — the prettified verb
+   *  in `label` collapses several tools to one word, so card rendering keys off this. */
+  tool?: string;
+  /** Raw tool input args (e.g. {command}, {path,offset,limit}) for rich card rendering. */
+  input?: Record<string, unknown>;
+  /** Tool output enriched from the session file (bash stdout, read content, web result).
+   *  `diff` carries pi's real line-numbered unified diff for `edit` (upgrades the diff card
+   *  from the synthetic args-based one); `firstChangedLine` is its first changed line. */
+  output?: { text: string; isError: boolean; diff?: string; firstChangedLine?: number };
+  /** Per-step expand state for showing the output/diff card. */
+  expanded?: boolean;
 }
 
 export interface Activity {
@@ -45,6 +61,13 @@ export interface UiMessage {
   /** Characters of `text` revealed so far for the typewriter effect. Only set
    * on the live-streaming assistant message; undefined means "show in full". */
   revealed?: number;
+  /** Token usage for this turn, summed across its API calls (from pi's message.usage). */
+  tokens?: number;
+  /** Cost in USD for this turn, summed across its API calls. */
+  cost?: number;
+  /** This turn was cut off (user pressed Stop, or VS Code closed mid-turn) — renders an
+   *  inline "Interrupted" marker below the turn. */
+  interrupted?: boolean;
 }
 
 export interface AppState {
@@ -59,4 +82,11 @@ export interface AppState {
   currentAssistantId: string | null;
   lastSentText: string;
   lastSentAt: number;
+  /** Cumulative token usage for the visible session (sum of every turn's usage). */
+  sessionTokens: number;
+  /** Cumulative cost in USD for the visible session. */
+  sessionCost: number;
+  /** This session was mid-turn when VS Code last closed — shows an "interrupted" notice
+   *  until the user continues. Set on restore from persisted state; cleared on next turn. */
+  interrupted?: boolean;
 }

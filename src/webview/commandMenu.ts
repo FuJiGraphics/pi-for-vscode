@@ -95,12 +95,16 @@ function score(row: CommandRow, q: string): number {
 }
 
 function itemHtml(row: CommandRow, idx: number, active: boolean): string {
-  const badge = row.sourceTag ? row.source + " · " + row.sourceTag : row.source;
+  // The middot that used to fuse "source · sourceTag" is gone: the source is a muted
+  // label and the tag (if any) a small pill, separated by the badge's flex gap.
+  const badgeInner =
+    '<span class="cb-source">' + escapeHtml(row.source) + "</span>" +
+    (row.sourceTag ? '<span class="cb-tag">' + escapeHtml(row.sourceTag) + "</span>" : "");
   return (
     '<button class="command-item' + (active ? " active" : "") + '" data-idx="' + idx + '">' +
     '<span class="command-name">/' + escapeHtml(row.name) + "</span>" +
     '<span class="command-desc">' + escapeHtml(row.description) + "</span>" +
-    '<span class="command-badge badge-' + row.source + '">' + escapeHtml(badge) + "</span>" +
+    '<span class="command-badge badge-' + row.source + '">' + badgeInner + "</span>" +
     "</button>"
   );
 }

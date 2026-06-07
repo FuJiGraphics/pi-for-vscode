@@ -19,6 +19,13 @@ import { fileURLToPath } from "node:url";
 const PI_VERSION = "0.78.1";
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 
+// Validated pi extensions shipped IN the bundle so todos + web research work out of the
+// box. The broker loads each via `-e <pkg>/index.ts` ONLY when the bundled pi is used AND
+// the user hasn't already installed it (see chatViewProvider.computeBundledExtensionArgs).
+// Keep in sync with BUNDLED_PI_PACKAGES in src/chatViewProvider.ts. Platform-independent
+// (pure JS/TS), so installed regardless of --os/--cpu.
+const BUNDLED_PACKAGES = ["@juicesharp/rpiv-todo@1.18.2", "pi-web-access@0.10.7"];
+
 const TARGETS = {
   "darwin-arm64": { os: "darwin", cpu: "arm64" },
   "darwin-x64": { os: "darwin", cpu: "x64" },
@@ -127,6 +134,7 @@ function main() {
       [
         "install",
         `${PI_PACKAGE}@${PI_VERSION}`,
+        ...BUNDLED_PACKAGES,
         "--omit=dev",
         "--no-audit",
         "--no-fund",
@@ -155,7 +163,7 @@ function main() {
     execFileSync("tar", ["-czf", tarball, "-C", stage, "node_modules"], { stdio: "inherit" });
     fs.writeFileSync(
       path.join(resources, "pi-bundle.manifest.json"),
-      JSON.stringify({ package: PI_PACKAGE, version: PI_VERSION, target }, null, 2) + "\n",
+      JSON.stringify({ package: PI_PACKAGE, version: PI_VERSION, target, packages: BUNDLED_PACKAGES }, null, 2) + "\n",
     );
 
     const sizeMb = (fs.statSync(tarball).size / (1024 * 1024)).toFixed(1);
