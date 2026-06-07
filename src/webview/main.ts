@@ -8,7 +8,7 @@ import { submitInput, autoResizeInput, updateInputState } from "./input";
 import { initImageAttachments, showImagePreview } from "./attachments";
 import { closeHistory, toggleHistory, renderSessionList, initHistory } from "./history";
 import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker } from "./modelPicker";
-import { acceptActive, closeCommandMenu, initCommandMenu, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
+import { acceptActive, closeCommandMenu, initCommandMenu, invalidateCommands, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
 import { ensureAnimating } from "./animator";
 import { piMarkHtml } from "./piMark";
 import { post } from "./bridge";
@@ -334,6 +334,10 @@ const inbound: InboundTable = {
   // session activation / lifecycle
   activate: (m) => {
     if (activateSession(m.sessionId)) {
+      // The newly active session has its own pi runtime, which may have loaded a different set of
+      // packages/skills (e.g. ones installed since the last session started). Drop the stale
+      // command cache so the slash palette reflects this runtime's commands.
+      invalidateCommands();
       resetScrollFollowing();
       scheduleRender();
     }

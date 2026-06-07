@@ -67,6 +67,16 @@ export function closeCommandMenu(): void {
   activeIndex = 0;
 }
 
+// Drop the cached pi command list so it is re-fetched. Called when the active session/runtime
+// changes: a different pi (with possibly different installed packages/skills) is now active, so
+// the previous get_commands snapshot is stale. The next openCommandMenu() re-requests via its
+// `!loaded` gate; if the menu is open right now, refetch immediately. Existing rows are kept until
+// the fresh list arrives so the menu does not flash empty.
+export function invalidateCommands(): void {
+  loaded = false;
+  if (isCommandMenuOpen()) post({ type: "requestCommands" });
+}
+
 export function setCommandQuery(q: string): void {
   query = q;
   activeIndex = 0;
