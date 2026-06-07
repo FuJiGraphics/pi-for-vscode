@@ -14,6 +14,9 @@ const options = {
   target: ["es2020"],
   outfile: "media/chat/chat.js",
   sourcemap: true,
+  // Shiki + grammars push the raw bundle near 1 MB; minify production builds (sourcemap kept,
+  // and .map is excluded from the VSIX). Skip under --watch so dev rebuilds stay fast/readable.
+  minify: !watch,
   logLevel: "info",
 };
 

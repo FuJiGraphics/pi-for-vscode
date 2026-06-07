@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { stepDetail, normalizeEdits, editDiffHtml, writePreviewHtml, cardFor, deriveTodos, isTodoStep, tokCost } from "../src/webview/cards";
+import { stepDetail, normalizeEdits, editDiffHtml, writePreviewHtml, cardFor, deriveTodos, isTodoStep, isCardCollapsible, timelineRow, tokCost } from "../src/webview/cards";
+import { langForPath, highlightToLines } from "../src/webview/highlight";
 import type { ActivityStep } from "../src/webview/types";
 
 function step(partial: Partial<ActivityStep>): ActivityStep {
@@ -88,4 +89,55 @@ test("isTodoStep + tokCost", () => {
   assert.equal(isTodoStep(step({ tool: "edit" })), false);
   assert.equal(tokCost(1), "1 token");
   assert.match(tokCost(5300, 0.03), /5\.3k tokens \| \$0\.03/);
+});
+
+test("stepDetail: Read header reflects the ACTUAL returned line count, not the requested limit", () => {
+  // 3-line file requested with limit 50 → "(lines 1–3)", not "1–50".
+  const s = step({ tool: "read", input: { path: "x.ts", offset: 1, limit: 50 }, output: { text: "a\nb\nc", isError: false } });
+  assert.equal(stepDetail(s), "x.ts (lines 1–3)");
+  // Truncated output (host cap marker present) → fall back to the requested limit range.
+  const t = step({ tool: "read", input: { path: "x.ts", offset: 1, limit: 50 }, output: { text: "a\nb\n…(truncated)", isError: false } });
+  assert.equal(stepDetail(t), "x.ts (lines 1–50)");
+});
+
+test("isCardCollapsible: read-only cards collapse, file-changing cards stay open", () => {
+  assert.equal(isCardCollapsible(step({ tool: "read" })), true);
+  assert.equal(isCardCollapsible(step({ tool: "edit" })), false);
+  assert.equal(isCardCollapsible(step({ tool: "write" })), false);
+});
+
+test("timelineRow: collapsible card is hidden until expanded and toggles via the row", () => {
+  const card = '<div class="tl-card tl-read">body</div>';
+  const collapsed = timelineRow({ id: "s1", status: "done", label: "Read", card, cardCollapsible: true, expanded: false });
+  assert.match(collapsed, /data-action="toggle-step"/);
+  assert.match(collapsed, /tl-chevron/);
+  assert.doesNotMatch(collapsed, /tl-card tl-read/); // body withheld while collapsed
+  const open = timelineRow({ id: "s1", status: "done", label: "Read", card, cardCollapsible: true, expanded: true });
+  assert.match(open, /tl-card tl-read/);
+  // Non-collapsible (edit/write) card is always rendered, no toggle.
+  const edit = timelineRow({ id: "s2", status: "done", label: "Edit", card: '<div class="tl-card tl-diff">d</div>', cardCollapsible: false });
+  assert.match(edit, /tl-card tl-diff/);
+  assert.doesNotMatch(edit, /data-action="toggle-step"/);
+});
+
+test("cards carry an expand control that opens the overlay", () => {
+  const html = cardFor(step({ tool: "write", input: { content: "x" } }));
+  assert.match(html, /data-action="expand-card"/);
+  assert.match(html, /data-step-id="s"/);
+});
+
+test("langForPath maps extensions to Shiki languages, unknown → plaintext", () => {
+  assert.equal(langForPath("src/a/b.ts"), "typescript");
+  assert.equal(langForPath("x.tsx"), "typescript");
+  assert.equal(langForPath("s.py"), "python");
+  assert.equal(langForPath("data.json"), "json");
+  assert.equal(langForPath("run.sh"), "bash");
+  assert.equal(langForPath("notes.unknownext"), "");
+  assert.equal(langForPath("Makefile"), "");
+  assert.equal(langForPath(undefined), "");
+});
+
+test("highlightToLines returns null before the highlighter is initialized (cards fall back to plaintext)", () => {
+  assert.equal(highlightToLines("const x = 1;", "typescript"), null);
+  assert.equal(highlightToLines("plain", ""), null);
 });

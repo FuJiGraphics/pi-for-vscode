@@ -13,3 +13,6 @@ media/chat/chat.js.map
 # Generated pi bundle (built by scripts/build-pi-bundle.mjs)
 resources/pi-bundle.tar.gz
 resources/pi-bundle.manifest.json
+
+# Personal Claude Code permission overrides
+.claude/settings.local.json
