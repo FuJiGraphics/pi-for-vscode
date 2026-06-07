@@ -142,6 +142,16 @@
           "default": 30,
           "minimum": 0,
           "description": "Minutes the detached Pi background broker stays alive after VS Code disconnects. Set to 0 to stop immediately when idle."
+        },
+        "pi-for-vscode.bundle.todo": {
+          "type": "boolean",
+          "default": true,
+          "description": "Load the bundled todo extension so Pi can track task lists. Skipped automatically if you have already installed a todo package in your own pi. Disable to keep it out of the system prompt."
+        },
+        "pi-for-vscode.bundle.web": {
+          "type": "boolean",
+          "default": true,
+          "description": "Load the bundled web-access extension so Pi can search the web and fetch URLs. Skipped automatically if you have already installed a web package in your own pi. Disable to keep it out of the system prompt."
         }
       }
     }
@@ -152,7 +162,9 @@
     "compile:webview": "tsc -p src/webview && node esbuild.js",
     "watch": "tsc -watch -p ./",
     "watch:webview": "node esbuild.js --watch",
-    "lint": "tsc -p ./ --noEmit && tsc -p src/webview",
+    "lint": "tsc -p ./ --noEmit && tsc -p src/webview && tsc -p test --noEmit && npm run lint:size",
+    "lint:size": "node scripts/lint-size.mjs",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "vscode:prepublish": "npm run compile",
     "build:pi-bundle": "node scripts/build-pi-bundle.mjs",
     "package": "vsce package",
@@ -163,6 +175,7 @@
     "@types/vscode": "^1.94.0",
     "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.28.0",
+    "tsx": "^4.22.4",
     "typescript": "^5.6.0"
   }
 }

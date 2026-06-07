@@ -49,6 +49,14 @@ pi-for-vscode는 "Pi Coding Agent"용 **네이티브 VS Code webview 클라이�
   코드에 하드코딩하지 않는다.
 - Pi 자체 세션 저장소(`~/.pi/agent/sessions/*.jsonl`)와의 호환을 유지한다. 세션 포맷을 바꾸지 않는다.
 - 커맨드는 실제 사용자 기능이 있을 때만 추가한다.
+- **거대 클래스 금지 — 책임 분리.** 한 클래스·파일은 "바뀔 이유" 하나만 갖는다. 이름을 `and` 없이/
+  모호한 `Manager·Helper·Util` 없이 못 짓거나, 무관한 기능 변경이 같은 파일에 자꾸 떨어지거나, 한
+  부분만 테스트하려는데 무관한 셋업이 필요하면 — 떼어낼 신호다. 새 책임은 볼트로 붙이지 말고 제
+  단위로(webview 표현(`WebviewPresenter`) ↔ 런타임 수명주기(`SessionRuntimeManager`) ↔ RPC 이벤트
+  (`RpcEventRouter`) ↔ 모델/BYOK(`ModelService`/`ModelSecretsStore`) ↔ 세션 CRUD(`SessionCrudService`)
+  는 서로 다른 단위). 단 소비자 없는 투기적 계층은 금지(확장성 적정선). `scripts/lint-size.mjs`가
+  `src/*.ts` 400줄을 강제한다(응집된 대형 모듈만 grandfather). god file 신호는
+  [docs/grounded-implementation.md](docs/grounded-implementation.md) 3단계.
 
 ## 피해야 할 방향
 
@@ -65,19 +73,29 @@ pi-for-vscode는 "Pi Coding Agent"용 **네이티브 VS Code webview 클라이�
 것**이지 이 repo의 것이 아니다(`pi`의 `--no-skills` / `--no-context-files`로 끌 수 있음). 이 repo의
 dev 지침은 사용자 cwd에 없으니 사용자 Pi 프롬프트에 절대 들어가지 않는다.
 
-**경계는 단 하나다: 무언가를 사용자 Pi에 실으려면 broker argv에 명시적으로 `--skill <path>`(또는
-`--append-system-prompt`)를 추가해야 한다.** 패키지(VSIX)에 들어있다는 사실만으로는 절대 프롬프트에
-실리지 않는다. 그러니 위치로 의도를 가른다:
+**경계는 단 하나다: 무언가를 사용자 Pi에 실으려면 broker argv에 명시적으로 `--skill <path>` /
+`-e <path>`(확장) / `--append-system-prompt`를 추가해야 한다.** 패키지(VSIX)에 들어있다는 사실만으로는
+절대 프롬프트에 실리지 않는다. 그러니 위치로 의도를 가른다:
 
 - **dev 전용 (절대 ship 안 함, 프롬프트 무관):** `.claude/`(Claude Code 스킬), `AGENTS.md`,
   `CLAUDE.md`, `docs/`. → [.vscodeignore](.vscodeignore)에서 제외. broker가 절대 `--skill` 하지 않음.
+- **번들 Pi 확장(검증된 것만):** `pi-bundle.tar.gz`에 동봉한 npm pi 확장(현재 `@juicesharp/rpiv-todo`
+  = todo 툴, `pi-web-access` = web search/fetch). [scripts/build-pi-bundle.mjs](scripts/build-pi-bundle.mjs)의
+  `BUNDLED_PACKAGES`로 설치하고, [src/chatViewProvider.ts](src/chatViewProvider.ts)의 `BUNDLED_PI_PACKAGES`/
+  `computeBundledExtensionArgs`가 `-e <node_modules>/<pkg>/index.ts`로 **명시 로드**한다. 정책은
+  **use-installed-else-bundled**: 사용자가 자기 pi에 같은 패키지를 이미 등록(`settings.json`의 `packages`)
+  했으면 그걸 쓰고 동봉본은 안 싣는다. 패키지별 설정 `pi-for-vscode.bundle.todo`/`.web`(기본 true)로
+  off하면 프롬프트에 0 영향. 시스템 프롬프트 증가분은 두 패키지 합쳐 **약 2K 토큰**(툴 정의+가이드라인,
+  세션당 1회·캐시됨) — 무시 가능한 수준으로 측정돼 의도적으로 기본 ON.
 - **사용자에게 제공할 Pi 스킬/프롬프트템플릿:** `resources/pi-skills/`(권장 경로)에 번들 → VSIX에
   포함 → broker가 그 절대경로를 `--skill`로 **명시 전달**. 이 경로의 것만 사용자 Pi에 실린다.
 - **그 외 런타임 자산:** `resources/`(pi 번들), `out/`, `media/`는 그대로 ship.
 
-새 스킬·지침을 만들 때 "Claude/dev 작업 도우미냐, 사용자에게 줄 Pi 기능이냐"로 위치를 먼저 가른다.
-단, 실제 ship할 Pi 스킬이 생기기 전에는 `resources/pi-skills/`와 `--skill` 배선을 미리 만들지 않는다
-(불필요한 추정 인프라 금지 — [docs/grounded-implementation.md](docs/grounded-implementation.md) 4단계).
+새 확장·스킬·지침을 만들 때 "Claude/dev 작업 도우미냐, 사용자에게 줄 Pi 기능이냐"로 위치를 먼저 가른다.
+새 번들 확장을 더할 땐 (1) 검증·반응이 좋은 것만, (2) 토큰 증가분을 측정해 통제 가능한지 확인하고,
+(3) 패키지별 토글을 함께 둔다. 한편 실제 ship할 Pi **스킬**이 생기기 전에는 `resources/pi-skills/`와
+`--skill` 배선을 미리 만들지 않는다(불필요한 추정 인프라 금지 —
+[docs/grounded-implementation.md](docs/grounded-implementation.md) 4단계).
 
 ## 커밋 규칙
 

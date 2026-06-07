@@ -16,6 +16,15 @@ This is controlled by `pi-for-vscode.useBundledPi` (`auto` | `always` | `never`)
 
 The bundled agent runs under VS Code's own Node runtime when it satisfies pi's engine floor (Node ≥ 22.19); otherwise a system `node` is used. macOS and Windows are supported today (Linux is pending an upstream prebuild).
 
+## Bundled tools
+
+Two validated pi extensions ship with the agent so common capabilities work out of the box:
+
+- **Todos** (`@juicesharp/rpiv-todo`) — lets Pi plan and track multi-step work; the chat renders it as a live checklist.
+- **Web access** (`pi-web-access`) — web search, code search, and URL/content fetch.
+
+These follow a **use-installed-else-bundled** policy: if you have already registered the same package in your own pi (`~/.pi/agent/settings.json`), your copy is used and the bundled one is skipped. Each is gated by a setting (`pi-for-vscode.bundle.todo` / `pi-for-vscode.bundle.web`, both on by default); turn one off to keep it out of the system prompt entirely.
+
 ## Status
 
 Early scaffold / MVP.
@@ -51,3 +60,5 @@ The pi bundle (`resources/pi-bundle.tar.gz`) is a generated artifact and is not 
 - `pi-for-vscode.persistSessions`: Use Pi's normal session storage. Disable to pass `--no-session`.
 - `pi-for-vscode.defaultStreamingBehavior`: Queue mode for prompts sent while Pi is running.
 - `pi-for-vscode.brokerIdleTimeoutMinutes`: How long the detached Pi broker stays alive after VS Code disconnects.
+- `pi-for-vscode.bundle.todo`: Load the bundled todo extension (skipped if you already have your own).
+- `pi-for-vscode.bundle.web`: Load the bundled web-access extension (skipped if you already have your own).

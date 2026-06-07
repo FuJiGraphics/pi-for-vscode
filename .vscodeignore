@@ -1,5 +1,6 @@
 .vscode/**
 src/**
+test/**
 scripts/**
 dist/**
 node_modules/**
