@@ -146,12 +146,12 @@
         "pi-for-vscode.bundle.todo": {
           "type": "boolean",
           "default": true,
-          "description": "Load the bundled todo extension so Pi can track task lists. Skipped automatically if you have already installed a todo package in your own pi. Disable to keep it out of the system prompt."
+          "description": "Load the bundled todo extension so Pi can track task lists. Skipped automatically if you have already registered this same package (@juicesharp/rpiv-todo) in your own pi — e.g. via `pi package add` or another Pi UI's marketplace. Disable to keep it out of the system prompt."
         },
         "pi-for-vscode.bundle.web": {
           "type": "boolean",
           "default": true,
-          "description": "Load the bundled web-access extension so Pi can search the web and fetch URLs. Skipped automatically if you have already installed a web package in your own pi. Disable to keep it out of the system prompt."
+          "description": "Load the bundled web-access extension so Pi can search the web and fetch URLs. Skipped automatically if you have already registered this same package (pi-web-access) in your own pi — e.g. via `pi package add` or another Pi UI's marketplace. Disable to keep it out of the system prompt."
         }
       }
     }

@@ -25,6 +25,12 @@ Two validated pi extensions ship with the agent so common capabilities work out 
 
 These follow a **use-installed-else-bundled** policy: if you have already registered the same package in your own pi (`~/.pi/agent/settings.json`), your copy is used and the bundled one is skipped. Each is gated by a setting (`pi-for-vscode.bundle.todo` / `pi-for-vscode.bundle.web`, both on by default); turn one off to keep it out of the system prompt entirely.
 
+## Pi extensions, skills, and MCP
+
+This extension is a thin wrapper: it launches your `pi` against your workspace, reads your shared `~/.pi/agent` configuration, and never disables Pi's own discovery. So anything you install into Pi — extensions, skills, prompt templates, and MCP servers — is picked up automatically, whether you installed it with the `pi` CLI (`pi package add …`) or through a separate Pi UI such as the **Pi Coding Agent** extension's (`pi0.pi-vscode`) "Packages" marketplace. Their tools render in the conversation and their commands appear in the `/` palette with no extra wiring on our side; the two extensions don't talk to each other — they simply share the same `pi` and the same `~/.pi/agent`.
+
+Pi loads installed packages when it starts, so after installing a new one, start a **New Session** to pick it up. The slash-command palette refreshes whenever the active session changes.
+
 ## Status
 
 Early scaffold / MVP.

@@ -97,6 +97,20 @@ dev 지침은 사용자 cwd에 없으니 사용자 Pi 프롬프트에 절대 들
 `--skill` 배선을 미리 만들지 않는다(불필요한 추정 인프라 금지 —
 [docs/grounded-implementation.md](docs/grounded-implementation.md) 4단계).
 
+### 사용자가 따로 설치한 Pi 확장과의 호환 (예: `pi0.pi-vscode` 마켓플레이스)
+
+별도의 Pi UI(`pi0.pi-vscode` "Pi Coding Agent"의 "Packages" 뷰, 또는 `pi package add`)로 설치한
+extension/skill/prompt/MCP는 **우리가 아무것도 안 해도** 우리 확장에 반영된다. broker가 사용자 pi를
+워크스페이스 cwd + 공유 `~/.pi/agent`로 띄우고 `--no-skills`/`--no-context-files`를 안 붙이기 때문이다
+(pi의 `getAgentDir()`는 바이너리 위치 무관하게 `~/.pi/agent` — 번들 pi든 시스템 pi든 같은 곳에서 해석).
+두 확장은 서로 통신하지 않고 같은 `pi`·`~/.pi/agent`만 공유한다. **이 경계를 깨지 말 것**: 우리 쪽에서
+패키지를 가로채 관리하거나 마켓플레이스 UI를 복제하지 않는다(표면적 최소 원칙).
+
+다만 pi는 패키지를 **spawn 시점에** 로드하고, webview 명령 캐시(`commandMenu.ts`의 `loaded`)는 활성
+세션이 바뀔 때만 무효화된다(`main.ts`의 `activate` → `invalidateCommands()`). 그래서 세션 도중 새로 설치한
+패키지의 슬래시 명령은 **새 세션**(= 새 pi 런타임)에서 보이는 게 정상이다. 이 동작을 바꾸려 pi 프로세스를
+임의 재시작하지 말 것.
+
 ## 커밋 규칙
 
 - 이 프로젝트의 커밋 작성자 계정은 항상 `fujigraphics <fujigraphics@users.noreply.github.com>`를
