@@ -1,8 +1,8 @@
 // Webview entry point: wires DOM events, routes inbound extension messages to
 // the appropriate handler, and performs the initial render.
-import { state } from "./state";
+import { state, withSession, activateSession, dropSession, adoptPersistedView, consumeRestored } from "./state";
 import { currentSessionTitle, render, scheduleRender } from "./render";
-import { addMessage, getMessage, setRunning, hydrateSessionMessages } from "./conversation";
+import { addMessage, getMessage, setRunning, hydrateSessionMessages, interruptCurrentTurn, recordToolOutput, toggleActivityStep } from "./conversation";
 import { handleRpcEvent, handleExtensionUiRequest, handleStderr } from "./handlers";
 import { submitInput, autoResizeInput, updateInputState } from "./input";
 import { initImageAttachments, showImagePreview } from "./attachments";
@@ -41,8 +41,17 @@ function mountBootSplash(): void {
   }, hold);
 }
 
-sendEl.addEventListener("click", submitInput);
+sendEl.addEventListener("click", () => {
+  if (state.running) {
+    interruptCurrentTurn();
+    setRunning(false);
+    post({ type: "abort" });
+    return;
+  }
+  submitInput();
+});
 stopEl.addEventListener("click", () => {
+  interruptCurrentTurn();
   setRunning(false);
   post({ type: "abort" });
 });
@@ -213,6 +222,11 @@ messagesEl.addEventListener("click", (event) => {
     scheduleRender();
     return;
   }
+  if (action === "toggle-step") {
+    const stepId = actionEl.dataset.stepId;
+    if (stepId) toggleActivityStep(stepId);
+    return;
+  }
   if (action === "preview-image" && message) {
     const index = Number(actionEl.dataset.index);
     const attachment = Number.isInteger(index) ? message.attachments?.[index] : undefined;
@@ -248,74 +262,102 @@ messagesEl.addEventListener("click", (event) => {
   }
 });
 
-window.addEventListener("message", (event) => {
-  const message = event.data as ExtensionToWebviewMessage | undefined;
-  if (!message || typeof message !== "object") return;
-  switch (message.type) {
-    case "rpcEvent":
-      handleRpcEvent(message.event);
-      break;
-    case "extensionUiRequest":
-      handleExtensionUiRequest(message.request);
-      break;
-    case "system": {
-      const text = message.text || "";
-      addMessage("system", text, { error: /error|failed|closed/i.test(text) });
-      break;
+// ---- inbound message routing ----
+// A typed handler table keyed by message type. The mapped `InboundTable` type forces
+// EXHAUSTIVENESS: add a variant to ExtensionToWebviewMessage without a handler here and tsc
+// errors — so every inbound transition is auditable in one place. Multi-statement flows are
+// named functions below with their ordering INVARIANT documented.
+type Inbound = ExtensionToWebviewMessage;
+type InboundHandler<T extends Inbound["type"]> = (message: Extract<Inbound, { type: T }>) => void;
+type InboundTable = { [T in Inbound["type"]]: InboundHandler<T> };
+
+/**
+ * INVARIANT (crash-restore ordering): the `state` message MUST arrive before
+ * `sessionMessages` for the same sessionId. `state` calls adoptPersistedView() which marks
+ * restoredIds; this consumes that mark to SKIP the disk re-seed so the richer persisted
+ * timeline isn't clobbered by plain disk messages. (Race #2 — see round-6 B4, which makes
+ * the skip robust to delivery order rather than relying on it.)
+ */
+function handleSessionMessages(message: Extract<Inbound, { type: "sessionMessages" }>): void {
+  if (consumeRestored(message.sessionId)) return;
+  withSession(message.sessionId, () => {
+    if (message.force || state.messages.length === 0) {
+      resetScrollFollowing();
+      hydrateSessionMessages(message.messages);
     }
-    case "stderr":
-      handleStderr(message.text || "");
-      break;
-    case "running":
-      setRunning(!!message.value);
-      break;
-    case "connection":
-      updateConnectionBanner(message.status);
-      break;
-    case "sessionMessages":
-      if (message.force || state.messages.length === 0) {
-        resetScrollFollowing();
-        hydrateSessionMessages(message.messages);
-      }
-      break;
-    case "sessionList":
-      renderSessionList(message.sessions);
-      break;
-    case "commandList":
-      renderCommandList(message.commands);
-      break;
-    case "modelList":
-      renderModelList(message.models);
-      break;
-    case "reset":
-      state.messages = [];
-      state.currentAssistantId = null;
-      state.running = false;
-      state.sessionName = "";
-      state.sessionFile = "";
-      state.status = "";
-      state.thinkingLevel = "";
-      state.thinkingLevels = [];
+  });
+}
+
+/**
+ * INVARIANT: adoptPersistedView() runs BEFORE the scalar field assignments — it overwrites
+ * messages/tokens/cost/running wholesale, and the scalars (sessionName/file/thinking/model)
+ * layer on top of the restored view.
+ */
+function handleSessionState(message: Extract<Inbound, { type: "state" }>): void {
+  withSession(message.sessionId, () => {
+    const s = message.state as any;
+    const model = s && s.model;
+    const sessionName = s && s.sessionName;
+    const sessionFile = s && typeof s.sessionFile === "string" ? s.sessionFile : "";
+    const isStreaming = s && typeof s.isStreaming === "boolean" ? s.isStreaming : undefined;
+    adoptPersistedView(message.sessionId, sessionFile);
+    state.sessionName = sessionName ? String(sessionName) : "";
+    state.sessionFile = sessionFile;
+    state.thinkingLevel = s && typeof s.thinkingLevel === "string" ? s.thinkingLevel : "";
+    state.thinkingLevels = supportedThinkingLevels(model);
+    state.modelLabel = model && (model.name || model.id) ? String(model.name || model.id) : state.modelLabel || "Pi";
+    if (typeof isStreaming === "boolean") setRunning(isStreaming);
+    else scheduleRender();
+  });
+}
+
+function handleReset(): void {
+  state.messages = [];
+  state.currentAssistantId = null;
+  state.running = false;
+  state.sessionName = "";
+  state.sessionFile = "";
+  state.status = "";
+  state.thinkingLevel = "";
+  state.thinkingLevels = [];
+  resetScrollFollowing();
+  scheduleRender();
+}
+
+const inbound: InboundTable = {
+  // per-session: applied to the tagged session's view
+  rpcEvent: (m) => withSession(m.sessionId, () => handleRpcEvent(m.event)),
+  toolOutput: (m) => withSession(m.sessionId, () => recordToolOutput(m.toolCallId, { text: m.text, isError: m.isError, diff: m.diff, firstChangedLine: m.firstChangedLine })),
+  running: (m) => withSession(m.sessionId, () => setRunning(!!m.value)),
+  sessionMessages: handleSessionMessages,
+  state: handleSessionState,
+  // session activation / lifecycle
+  activate: (m) => {
+    if (activateSession(m.sessionId)) {
       resetScrollFollowing();
       scheduleRender();
-      break;
-    case "state": {
-      const s = message.state as any;
-      const model = s && s.model;
-      const sessionName = s && s.sessionName;
-      const sessionFile = s && s.sessionFile;
-      const isStreaming = s && typeof s.isStreaming === "boolean" ? s.isStreaming : undefined;
-      state.sessionName = sessionName ? String(sessionName) : "";
-      state.sessionFile = sessionFile ? String(sessionFile) : "";
-      state.thinkingLevel = s && typeof s.thinkingLevel === "string" ? s.thinkingLevel : "";
-      state.thinkingLevels = supportedThinkingLevels(model);
-      state.modelLabel = model && (model.name || model.id) ? String(model.name || model.id) : state.modelLabel || "Pi";
-      state.status = state.running ? "Pi is working" : "";
-      if (typeof isStreaming === "boolean") setRunning(isStreaming);
-      else scheduleRender();
-      break;
     }
-  }
+  },
+  dropSession: (m) => dropSession(m.sessionId),
+  reset: handleReset,
+  // global (not session-scoped)
+  extensionUiRequest: (m) => handleExtensionUiRequest(m.request),
+  system: (m) => {
+    const text = m.text || "";
+    addMessage("system", text, { error: /error|failed|closed/i.test(text) });
+  },
+  stderr: (m) => handleStderr(m.text || ""),
+  connection: (m) => updateConnectionBanner(m.status),
+  sessionList: (m) => renderSessionList(m.sessions),
+  commandList: (m) => renderCommandList(m.commands),
+  modelList: (m) => renderModelList(m.models),
+};
+
+window.addEventListener("message", (event) => {
+  const message = event.data as Inbound | undefined;
+  if (!message || typeof message !== "object") return;
+  const handle = inbound[message.type as Inbound["type"]] as ((m: Inbound) => void) | undefined;
+  if (handle) handle(message);
 });
 
 initHistory();

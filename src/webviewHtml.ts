@@ -41,7 +41,6 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
         <button class="icon-button" title="Settings" aria-label="Settings">⚙</button>
       </div>
     </header>
-    <div id="status" class="status">Pi</div>
     <div id="connection-banner" class="connection-banner" role="status" aria-live="polite" hidden></div>
     <main id="messages" tabindex="0"></main>
     <button id="jumpLatest" class="jump-latest" hidden aria-label="Jump to latest">↓ Jump to latest</button>

@@ -17,7 +17,6 @@ export const appEl = bySelector<HTMLElement>(".app");
 export const titleEl = byId<HTMLElement>("title");
 export const messagesEl = byId<HTMLElement>("messages");
 export const jumpLatestEl = byId<HTMLButtonElement>("jumpLatest");
-export const statusEl = byId<HTMLElement>("status");
 export const connectionBannerEl = byId<HTMLElement>("connection-banner");
 export const inputEl = byId<HTMLTextAreaElement>("input");
 export const attachmentTrayEl = byId<HTMLElement>("attachmentTray");
