@@ -9,13 +9,18 @@ const watch = process.argv.includes("--watch");
 const options = {
   entryPoints: ["src/webview/main.ts"],
   bundle: true,
-  format: "iife",
+  // ESM + code splitting so each Shiki grammar (dynamically imported via shiki/langs) becomes its
+  // own chunk, fetched on demand — the entry stays small and all ~332 languages are available
+  // without bundling them all. Entry → media/chat/main.js, grammars → media/chat/chunk-*.js. The
+  // webview loads main.js as a module (CSP needs 'strict-dynamic'; see webviewHtml.ts).
+  format: "esm",
+  splitting: true,
   platform: "browser",
   target: ["es2020"],
-  outfile: "media/chat/chat.js",
+  outdir: "media/chat",
   sourcemap: true,
-  // Shiki + grammars push the raw bundle near 1 MB; minify production builds (sourcemap kept,
-  // and .map is excluded from the VSIX). Skip under --watch so dev rebuilds stay fast/readable.
+  // Minify production builds (sourcemap kept, .map excluded from the VSIX). Skip under --watch so
+  // dev rebuilds stay fast/readable.
   minify: !watch,
   logLevel: "info",
 };

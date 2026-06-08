@@ -13,6 +13,11 @@
 // merely importing this module (e.g. from cards.ts in a unit test) never pulls in Shiki.
 import type { HighlighterCore } from "shiki/core";
 import type { ThemedToken } from "@shikijs/types";
+// Metadata + per-grammar dynamic-import thunks for ALL ~332 bundled languages. Importing this is
+// cheap (just the id/alias table + tiny loader fns); each grammar's actual weight lives behind its
+// `() => import('@shikijs/langs/<id>')` thunk, which esbuild (esm + splitting) emits as a separate
+// chunk fetched only on demand. The JS regex engine (CSP-safe) is still used.
+import { bundledLanguagesBase, bundledLanguagesInfo } from "shiki/langs";
 import { escapeHtml } from "./util";
 
 export type ThemeKind = "light" | "dark" | "highContrast" | "highContrastLight";
@@ -37,6 +42,9 @@ export async function initHighlighter(): Promise<void> {
   highlighter = await core.createHighlighterCore({
     engine,
     themes: [import("@shikijs/themes/dark-plus"), import("@shikijs/themes/light-plus")],
+    // Only the small CORE_LANGS set ships eagerly (instant highlighting for the dominant
+    // languages). Every other grammar is loaded on demand via ensureLanguage(). Keep this list
+    // in sync with CORE_LANGS below.
     langs: [
       import("@shikijs/langs/typescript"),
       import("@shikijs/langs/javascript"),
@@ -46,24 +54,9 @@ export async function initHighlighter(): Promise<void> {
       import("@shikijs/langs/html"),
       import("@shikijs/langs/bash"),
       import("@shikijs/langs/markdown"),
-      import("@shikijs/langs/yaml"),
-      import("@shikijs/langs/csharp"),
-      import("@shikijs/langs/java"),
-      import("@shikijs/langs/kotlin"),
-      import("@shikijs/langs/go"),
-      import("@shikijs/langs/rust"),
-      import("@shikijs/langs/c"),
-      import("@shikijs/langs/cpp"),
-      import("@shikijs/langs/ruby"),
-      import("@shikijs/langs/php"),
-      import("@shikijs/langs/swift"),
-      import("@shikijs/langs/sql"),
-      import("@shikijs/langs/toml"),
     ],
-    // Common languages a code-review tool encounters. esbuild inlines each grammar into the single
-    // IIFE bundle (no code-split), so adding one ships its full weight — add a line above + an ext
-    // mapping below to support more.
   });
+  for (const id of CORE_LANGS) loaded.add(id);
   if (pending) {
     await applyTheme(pending.theme, pending.kind);
     pending = undefined;
@@ -131,6 +124,44 @@ export function langForPath(path: unknown): string {
   return LANG_BY_EXT[base.slice(dot + 1).toLowerCase()] || "";
 }
 
+// Resolve a fenced-code-block info string / language alias to a canonical Shiki language id,
+// covering ALL bundled grammars + their aliases (e.g. ts→typescript, shell→bash, c++→cpp). Built
+// once from Shiki's own table, so it stays correct across the full ~332-language set. Unknown /
+// plaintext / "" → "" (the fence renders as escaped plaintext).
+const CANONICAL = new Map<string, string>();
+for (const info of bundledLanguagesInfo) {
+  CANONICAL.set(info.id, info.id);
+  for (const alias of info.aliases || []) CANONICAL.set(alias, info.id);
+}
+
+export function normalizeLang(id: unknown): string {
+  if (typeof id !== "string") return "";
+  const key = id.trim().toLowerCase();
+  return key ? CANONICAL.get(key) || "" : "";
+}
+
+// On-demand grammar loading. Only CORE_LANGS ship in the entry bundle; any other language's
+// grammar chunk is fetched the first time it appears, after which the affected code block repaints
+// (notify → bumpHighlightVersion). `loaded` = ready to tokenize; `loading` = chunk in flight.
+const CORE_LANGS = ["typescript", "javascript", "json", "python", "css", "html", "bash", "markdown"];
+const loaded = new Set<string>();
+const loading = new Set<string>();
+
+function ensureLanguage(canon: string): void {
+  if (!highlighter || loaded.has(canon) || loading.has(canon)) return;
+  const loader = bundledLanguagesBase[canon];
+  if (!loader) return; // not a known grammar → stays plaintext
+  loading.add(canon);
+  highlighter
+    .loadLanguage(loader)
+    .then(() => {
+      loaded.add(canon);
+      loading.delete(canon);
+      notify();
+    })
+    .catch(() => loading.delete(canon)); // load failed → leave as plaintext
+}
+
 // Build one token's <span> with an inline style. Shiki's color/fontStyle come from the loaded
 // (trusted) theme; content is escaped. Inline styles are allowed by the webview CSP
 // (style-src 'unsafe-inline'). bgColor is intentionally dropped so it never fights the card's
@@ -151,8 +182,13 @@ function tokenSpan(token: ThemedToken): string {
 // back to escapeHtml. Returning lines (not one block) maps 1:1 onto the gutter row builder.
 export function highlightToLines(code: string, lang: string): string[] | null {
   if (!highlighter || !lang) return null;
+  const canon = CANONICAL.get(lang) || lang;
+  if (!loaded.has(canon)) {
+    ensureLanguage(canon); // fetch the grammar chunk; the block repaints when it's ready
+    return null; // plaintext fallback until then
+  }
   try {
-    const { tokens } = highlighter.codeToTokens(code, { lang, theme: currentTheme });
+    const { tokens } = highlighter.codeToTokens(code, { lang: canon, theme: currentTheme });
     return tokens.map((line) => line.map(tokenSpan).join(""));
   } catch {
     return null;

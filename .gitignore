@@ -6,9 +6,10 @@ dist/
 .vscode-test/
 coverage/
 
-# Generated webview bundle (built by esbuild from src/webview)
-media/chat/chat.js
-media/chat/chat.js.map
+# Generated webview bundle + per-grammar chunks (built by esbuild from src/webview).
+# Keep chat.css (a source file); ignore all generated JS/maps in this dir.
+media/chat/*.js
+media/chat/*.js.map
 
 # Generated pi bundle (built by scripts/build-pi-bundle.mjs)
 resources/pi-bundle.tar.gz
