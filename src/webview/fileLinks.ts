@@ -16,7 +16,7 @@ import { escapeHtml } from "./util";
 // starting mid-token or right after "://" (so URL path tails are not re-linkified). The filename
 // uses [\w.-]+ (dots allowed) with a greedy backtrack to a letter-led final extension, so
 // multi-dot names like app.config.js resolve to the whole name, not a truncated prefix.
-const FILE_REF = /(?<![\w./:-])((?:\.{0,2}\/)?(?:[\w.-]+\/)*[\w.-]+\.[A-Za-z]\w*)(?::(\d+)(?::(\d+))?)?/g;
+const FILE_REF = /(?<![\w./:-])((?:\.{0,2}\/)?(?:[\w.-]+\/)*[\w.-]+\.[A-Za-z]\w*)(?::(\d+)(?::(\d+))?(?:[-–]\d+)?)?/g;
 
 /** Wrap file references found in an ALREADY-HTML-ESCAPED text fragment. */
 export function linkifyFileRefs(escaped: string): string {
