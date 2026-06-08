@@ -23,13 +23,6 @@ export function roleLabel(role: string): string {
   return role;
 }
 
-export function renderMarkdown(text: string): string {
-  let html = escapeHtml(text);
-  html = html.replace(new RegExp("[*][*]([^*]+)[*][*]", "g"), "<strong>$1</strong>");
-  html = html.replace(new RegExp("(https?://[^ )]+)", "g"), '<a href="$1">$1</a>');
-  return html;
-}
-
 export function formatTime(value: number | undefined): string {
   if (!value) return "";
   try {

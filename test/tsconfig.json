@@ -7,6 +7,6 @@
     "noEmit": true,
     "lib": ["ES2022", "DOM"]
   },
-  "include": ["**/*.ts"],
+  "include": ["**/*.ts", "../src/webview/shims.d.ts"],
   "exclude": []
 }
