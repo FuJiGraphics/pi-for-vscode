@@ -5,6 +5,7 @@ import { scheduleRender } from "./render";
 import { ensureAnimating } from "./animator";
 import { finalizeOrPrune } from "./turnBoundary";
 import { uid } from "./util";
+import { effectiveExpanded } from "./cards";
 import type { Activity, ActivityStep, UiImageAttachment, UiMessage, UiPrompt, UiRole } from "./types";
 
 export function getMessage(id: string | null | undefined): UiMessage | undefined {
@@ -190,11 +191,13 @@ export function recordToolOutput(
   }
 }
 
-// Expand/collapse a step's output/diff card.
+// Expand/collapse a step's output/diff card. Flip the EFFECTIVE state (explicit toggle or the
+// per-tool default) so the first click on a default-open card actually closes it, rather than
+// flipping an `undefined` to `true` and visibly doing nothing.
 export function toggleActivityStep(stepId: string): void {
   const step = findStep(stepId);
   if (step) {
-    step.expanded = !step.expanded;
+    step.expanded = !effectiveExpanded(step);
     scheduleRender();
   }
 }

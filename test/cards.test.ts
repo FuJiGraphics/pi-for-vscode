@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { stepDetail, normalizeEdits, editDiffHtml, writePreviewHtml, cardFor, deriveTodos, isTodoStep, isCardCollapsible, timelineRow, tokCost } from "../src/webview/cards";
+import { stepDetail, normalizeEdits, editDiffHtml, writePreviewHtml, cardFor, isCardCollapsible, cardDefaultExpanded, effectiveExpanded, timelineRow, tokCost } from "../src/webview/cards";
+import { deriveTodos, isTodoStep } from "../src/webview/cardsTodo";
 import { langForPath, highlightToLines } from "../src/webview/highlight";
 import type { ActivityStep } from "../src/webview/types";
 
@@ -100,10 +101,24 @@ test("stepDetail: Read header reflects the ACTUAL returned line count, not the r
   assert.equal(stepDetail(t), "x.ts (lines 1–50)");
 });
 
-test("isCardCollapsible: read-only cards collapse, file-changing cards stay open", () => {
+test("isCardCollapsible: read/edit/write cards all collapse behind the row chevron", () => {
   assert.equal(isCardCollapsible(step({ tool: "read" })), true);
-  assert.equal(isCardCollapsible(step({ tool: "edit" })), false);
-  assert.equal(isCardCollapsible(step({ tool: "write" })), false);
+  assert.equal(isCardCollapsible(step({ tool: "edit" })), true);
+  assert.equal(isCardCollapsible(step({ tool: "write" })), true);
+  assert.equal(isCardCollapsible(step({ tool: "bash" })), false);
+});
+
+test("cardDefaultExpanded/effectiveExpanded: Edit/Write open by default, Read collapses; explicit toggle wins", () => {
+  // Default-open state (no explicit toggle yet): the change-bearing cards show, Read hides.
+  assert.equal(cardDefaultExpanded(step({ tool: "edit" })), true);
+  assert.equal(cardDefaultExpanded(step({ tool: "write" })), true);
+  assert.equal(cardDefaultExpanded(step({ tool: "read" })), false);
+  // effectiveExpanded falls back to the default until step.expanded is set explicitly.
+  assert.equal(effectiveExpanded(step({ tool: "write" })), true);
+  assert.equal(effectiveExpanded(step({ tool: "read" })), false);
+  // An explicit toggle overrides the default in BOTH directions.
+  assert.equal(effectiveExpanded(step({ tool: "write", expanded: false })), false);
+  assert.equal(effectiveExpanded(step({ tool: "read", expanded: true })), true);
 });
 
 test("timelineRow: collapsible card is hidden until expanded and toggles via the row", () => {
@@ -114,10 +129,20 @@ test("timelineRow: collapsible card is hidden until expanded and toggles via the
   assert.doesNotMatch(collapsed, /tl-card tl-read/); // body withheld while collapsed
   const open = timelineRow({ id: "s1", status: "done", label: "Read", card, cardCollapsible: true, expanded: true });
   assert.match(open, /tl-card tl-read/);
-  // Non-collapsible (edit/write) card is always rendered, no toggle.
-  const edit = timelineRow({ id: "s2", status: "done", label: "Edit", card: '<div class="tl-card tl-diff">d</div>', cardCollapsible: false });
-  assert.match(edit, /tl-card tl-diff/);
-  assert.doesNotMatch(edit, /data-action="toggle-step"/);
+  // A non-collapsible card (bash output, todos) is always rendered, no toggle.
+  const fixed = timelineRow({ id: "s2", status: "done", label: "Todos", card: '<div class="tl-card todo-list">d</div>', cardCollapsible: false });
+  assert.match(fixed, /tl-card todo-list/);
+  assert.doesNotMatch(fixed, /data-action="toggle-step"/);
+});
+
+test("timelineRow: a collapsed Write card shows the chevron but withholds its (large) body", () => {
+  const card = '<div class="tl-card tl-write">200 lines…</div>';
+  const collapsed = timelineRow({ id: "w1", status: "done", label: "Write", card, cardCollapsible: true, expanded: false });
+  assert.match(collapsed, /data-action="toggle-step"/);
+  assert.match(collapsed, /tl-chevron/);
+  assert.doesNotMatch(collapsed, /tl-card tl-write/); // huge preview not glued open
+  const open = timelineRow({ id: "w1", status: "done", label: "Write", card, cardCollapsible: true, expanded: true });
+  assert.match(open, /tl-card tl-write/);
 });
 
 test("cards carry an expand control that opens the overlay", () => {
