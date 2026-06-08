@@ -2,13 +2,13 @@
 // the appropriate handler, and performs the initial render.
 import { state, withSession, activateSession, dropSession, adoptPersistedView, consumeRestored } from "./state";
 import { currentSessionTitle, render, scheduleRender, bumpHighlightVersion } from "./render";
-import { addMessage, getMessage, setRunning, hydrateSessionMessages, interruptCurrentTurn, recordToolOutput, toggleActivityStep, findStep } from "./conversation";
+import { addMessage, setRunning, hydrateSessionMessages, interruptCurrentTurn, recordToolOutput } from "./conversation";
 import { handleRpcEvent, handleExtensionUiRequest, handleStderr } from "./handlers";
-import { showCardOverlay } from "./cardOverlay";
+import { handleMessageClick } from "./messageActions";
 import { initHighlighter, setHighlightNotifier, setTheme } from "./highlight";
 import { initWakeDetection } from "./wake";
 import { submitInput, autoResizeInput, updateInputState, composerIsEmpty } from "./input";
-import { initImageAttachments, showImagePreview } from "./attachments";
+import { initImageAttachments } from "./attachments";
 import { closeHistory, toggleHistory, renderSessionList, initHistory } from "./history";
 import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker } from "./modelPicker";
 import { acceptActive, closeCommandMenu, initCommandMenu, invalidateCommands, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
@@ -216,63 +216,7 @@ inputEl.addEventListener("keydown", (event) => {
   }
 });
 
-messagesEl.addEventListener("click", (event) => {
-  const target = event.target as HTMLElement | null;
-  const actionEl = target && target.closest ? (target.closest("[data-action]") as HTMLElement | null) : null;
-  if (!actionEl) return;
-  const action = actionEl.dataset.action;
-  const id = actionEl.dataset.id;
-  const message = id ? getMessage(id) : undefined;
-  if (action === "toggle-activity" && message && message.activity) {
-    message.activity.expanded = !message.activity.expanded;
-    scheduleRender();
-    return;
-  }
-  if (action === "toggle-step") {
-    const stepId = actionEl.dataset.stepId;
-    if (stepId) toggleActivityStep(stepId);
-    return;
-  }
-  if (action === "expand-card") {
-    const stepId = actionEl.dataset.stepId;
-    const step = stepId ? findStep(stepId) : undefined;
-    if (step) showCardOverlay(step);
-    return;
-  }
-  if (action === "preview-image" && message) {
-    const index = Number(actionEl.dataset.index);
-    const attachment = Number.isInteger(index) ? message.attachments?.[index] : undefined;
-    if (attachment) showImagePreview(attachment);
-    return;
-  }
-  if (action === "copy" && message) {
-    post({ type: "copy", text: message.text || "" });
-    actionEl.classList.add("copied");
-    actionEl.textContent = "✓";
-    setTimeout(() => scheduleRender(), 700);
-    return;
-  }
-  if (action === "edit" && message) {
-    inputEl.value = message.text || "";
-    autoResizeInput();
-    updateInputState();
-    inputEl.focus();
-    return;
-  }
-  if ((action === "ui-confirm" || action === "ui-cancel") && message && message.ui) {
-    message.ui.resolved = true;
-    post({
-      type: "extensionUiResponse",
-      response: {
-        type: "extension_ui_response",
-        id: message.ui.requestId,
-        confirmed: action === "ui-confirm",
-        cancelled: action === "ui-cancel",
-      },
-    });
-    scheduleRender();
-  }
-});
+messagesEl.addEventListener("click", handleMessageClick);
 
 // ---- inbound message routing ----
 // A typed handler table keyed by message type. The mapped `InboundTable` type forces
