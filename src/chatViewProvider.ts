@@ -13,6 +13,7 @@ import { getChatHtml } from "./webviewHtml";
 import { samePath } from "./workspace";
 import { readSessionFile } from "./stateHelpers";
 import { resolveActiveTheme } from "./themeResolver";
+import { openWorkspaceFile } from "./fileOpener";
 
 const VIEW_ID = "pi-for-vscode.chat";
 
@@ -192,6 +193,17 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
           return;
         case "copy":
           await vscode.env.clipboard.writeText(message.text ?? "");
+          return;
+        case "openFile":
+          await openWorkspaceFile(message.path, message.line, message.col);
+          return;
+        case "insertCode":
+          await this.insertIntoActiveEditor(message.text);
+          return;
+        case "applyCode":
+          // Hand the snippet to Pi to apply — Pi owns file edits via its tools (thin wrapper). A
+          // 4-backtick fence survives 3-backtick code inside the snippet.
+          await this.prompt("Apply the following code to the appropriate file in this project:\n\n````\n" + message.text + "\n````");
           return;
         case "wake":
           this.manager.probeConnection();

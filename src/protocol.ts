@@ -182,6 +182,13 @@ export type WebviewToExtensionMessage =
   | { type: "addProviderKey" }
   | { type: "getState" }
   | { type: "copy"; text?: string }
+  // Open a workspace file the user clicked in a rendered message. Path is workspace-relative (or
+  // absolute); the host resolves + reveals the line, and silently no-ops if it doesn't exist.
+  | { type: "openFile"; path: string; line?: number; col?: number }
+  // Code-block actions: insert the snippet at the active editor's cursor, or hand it to Pi to apply
+  // (Pi owns the edit; we don't reimplement a merge model).
+  | { type: "insertCode"; text: string }
+  | { type: "applyCode"; text: string }
   // Connection lifecycle: the webview nudges the host to verify/reconnect the
   // broker socket — `wake` after a sleep/visibility gap, `reconnect` from the
   // disconnected banner's Retry button.
