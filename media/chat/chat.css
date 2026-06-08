@@ -49,7 +49,7 @@
   --fs-micro: calc(var(--fs-base) * 0.8);  /* micro uppercase labels & pills (~10.4px) */
   --fs-code: calc(var(--fs-base) * 0.9);   /* monospace code/diff/output (~11.7px), pair with --mono */
   --fs-icon: calc(var(--fs-base) + 4px);    /* in-flow action glyphs (~17px); boxes stay fixed px */
-  --fs-icon-lg: calc(var(--fs-base) + 11px); /* composer CTA glyphs (~24px); boxes stay fixed px */
+  --fs-icon-lg: calc(var(--fs-base) + 4px);  /* composer CTA glyphs (~17px; ~30% smaller); boxes stay fixed px */
   --fs-title: calc(var(--fs-base) + 3px);   /* top-bar session title (~16px) */
   --chip-pad: 0 5px;     /* shared pill padding for presentational chips (cb-tag, model-cap) */
   --chip-radius: 5px;
