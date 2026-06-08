@@ -10,9 +10,11 @@
 // This split is what keeps hover/toggle stable: the activity DOM is never rebuilt
 // at 60fps, so :hover state and click targets survive.
 import { state, save, isRenderSuppressed } from "./state";
-import { messagesEl, titleEl, thinkingControlEl, modelEl, stopEl, composerEl, sendEl, inputEl } from "./dom";
-import { escapeHtml, renderMarkdown, formatTime, formatDuration, roleLabel } from "./util";
-import { cardFor, deriveTodos, isCardCollapsible, isTodoStep, stepDetail, timelineRow, tokCost, todoCardHtml } from "./cards";
+import { messagesEl, titleEl, thinkingControlEl, modelEl, stopEl, composerEl, sendEl, inputEl, queueIndicatorEl } from "./dom";
+import { escapeHtml, formatTime, formatDuration, roleLabel } from "./util";
+import { renderMarkdown } from "./markdown";
+import { cardFor, effectiveExpanded, isCardCollapsible, stepDetail, timelineRow, tokCost } from "./cards";
+import { deriveTodos, isTodoStep, todoCardHtml } from "./cardsTodo";
 import { thinkingLabel } from "./spinner";
 import { piMarkHtml } from "./piMark";
 import { pixelWordHtml } from "./pixelFont";
@@ -24,6 +26,14 @@ let renderQueued = false;
 let emptyRendered = false;
 const renderedNodes = new Map<string, HTMLElement>();
 const renderKeys = new WeakMap<HTMLElement, string>();
+
+// Streaming re-parse gate: the reveal animation paints every frame, but markdown-it + Shiki are
+// too heavy to re-run per frame on a growing buffer. Re-render only after the revealed text
+// advances by this many chars (or on the final, non-streaming frame), keyed per bubble element so
+// a structural rebuild (new bubble node) resets cleanly. Keeps the char-by-char reveal smooth
+// while bounding parses to ~length/STEP instead of one per frame.
+const STREAM_RENDER_STEP = 8;
+const liveRenderedLen = new WeakMap<Element, number>();
 
 // Bumped when the Shiki highlighter becomes ready or the theme changes. Folded into the step
 // render key (stepsSig) so the timeline nodes — whose card HTML now differs — are rebuilt; a
@@ -148,7 +158,7 @@ function stepsRowsHtml(activity: Activity): string {
       cost: step.cost,
       gen: step.kind === "generation",
       output: step.output,
-      expanded: step.expanded,
+      expanded: effectiveExpanded(step),
       card: cardFor(step),
       cardCollapsible: isCardCollapsible(step),
     }));
@@ -317,7 +327,7 @@ function messageRenderKey(message: UiMessage): string {
   const activity = message.activity;
   const stepsSig = activity
     ? activity.steps
-        .map((s) => s.id + "|" + s.status + "|" + s.label + "|" + (s.tool || "") + "|" + s.detail + "|" + (s.output ? "O" : "") + (s.expanded ? "X" : ""))
+        .map((s) => s.id + "|" + s.status + "|" + s.label + "|" + (s.tool || "") + "|" + s.detail + "|" + (s.output ? "O" : "") + (effectiveExpanded(s) ? "X" : ""))
         .join(";") +
       "#" + activity.steps.length + (activity.expanded ? "E" : "") + (activity.endedAt ? "D" : "") + "@" + highlightVersion
     : "";
@@ -333,6 +343,9 @@ function messageRenderKey(message: UiMessage): string {
     ui: message.ui ? message.ui.kind + (message.ui.resolved ? "R" : "") : "",
     attachments: (message.attachments || []).map((attachment) => attachment.id + "|" + attachment.name).join(";"),
     text: message.role === "assistant" ? "" : message.text,
+    // Bubble code blocks highlight lazily — fold highlightVersion in so a message repaints when its
+    // grammar finishes loading (or the theme changes). Without this only tool cards (stepsSig) would.
+    hl: highlightVersion,
   });
 }
 
@@ -389,8 +402,16 @@ export function paintLiveMessage(): void {
     const bubble = node.querySelector(".bubble");
     if (bubble) {
       const streaming = isStreaming(message);
-      const shown = streaming ? message.text.slice(0, message.revealed) : message.text;
-      bubble.innerHTML = renderMarkdown(shown) + (streaming ? '<span class="stream-cursor"></span>' : "");
+      const shownLen = streaming ? (message.revealed as number) : message.text.length;
+      const last = liveRenderedLen.get(bubble);
+      // During streaming, batch by STREAM_RENDER_STEP; the final (non-streaming) frame always
+      // renders so the complete text — and any not-yet-shown markdown/code — lands.
+      const needsRender = streaming ? last === undefined || shownLen - last >= STREAM_RENDER_STEP : last !== shownLen;
+      if (needsRender) {
+        const shown = streaming ? message.text.slice(0, message.revealed) : message.text;
+        bubble.innerHTML = renderMarkdown(shown) + (streaming ? '<span class="stream-cursor"></span>' : "");
+        liveRenderedLen.set(bubble, shownLen);
+      }
     }
   }
 
@@ -410,6 +431,25 @@ export function refreshSendButton(): void {
   sendEl.classList.toggle("empty", !state.running && empty);
 }
 
+// "N queued" pill above the composer — reassurance that rapid-fire sends were accepted and are
+// waiting their turn (Claude-style), instead of a flickering stack of per-run indicators.
+// state.status is the single source (the queue_update handler sets the count, clears on drain /
+// turn end / reset). The dataset guard avoids re-writing innerHTML on every unrelated render.
+function renderQueueIndicator(): void {
+  const status = state.status;
+  if (!status) {
+    queueIndicatorEl.hidden = true;
+    queueIndicatorEl.dataset.status = "";
+    return;
+  }
+  if (queueIndicatorEl.dataset.status !== status) {
+    queueIndicatorEl.dataset.status = status;
+    queueIndicatorEl.innerHTML =
+      '<span class="activity-working-dot" aria-hidden="true"></span><span>' + escapeHtml(status) + "</span>";
+  }
+  queueIndicatorEl.hidden = false;
+}
+
 export function render(): void {
   const title = currentSessionTitle();
   if (!titleEl.classList.contains("editing")) {
@@ -424,6 +464,7 @@ export function render(): void {
   stopEl.hidden = true;
   composerEl.classList.toggle("working", !!state.running);
   refreshSendButton();
+  renderQueueIndicator();
 
   const followLatest = shouldFollowLatest();
 

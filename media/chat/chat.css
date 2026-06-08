@@ -207,7 +207,7 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   gap: 7px;
 }
 .bubble {
-  white-space: pre-wrap;
+  white-space: normal;
   overflow-wrap: anywhere;
 }
 .message.user .bubble {
@@ -353,8 +353,8 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .meta button:active, .assistant-actions button:active { transform: scale(.94); }
 .message.assistant {
   color: color-mix(in srgb, var(--fg) 91%, var(--muted));
-  font-size: var(--fs-prose);
-  line-height: 1.7;
+  font-size: var(--fs-body);
+  line-height: 1.6;
   letter-spacing: -.005em;
 }
 .message.assistant .bubble { max-width: 860px; }
@@ -820,6 +820,121 @@ code.inline-code {
 a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
+/* ---- rich markdown inside chat bubbles (markdown-it output) ----
+   Scoped to .bubble so the activity timeline / tool cards are untouched. Reuses the theme
+   variables above; Shiki emits inline-styled token spans inside .md-code, so the container
+   rules here set only base colors and never fight those inline styles. */
+.bubble > :first-child { margin-top: 0; }
+.bubble > :last-child { margin-bottom: 0; }
+.bubble p { margin: 0 0 .7em; }
+.bubble h1, .bubble h2, .bubble h3, .bubble h4 {
+  margin: 1.1em 0 .5em;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--fg);
+}
+.bubble h1 { font-size: 1.4em; }
+.bubble h2 { font-size: 1.22em; }
+.bubble h3 { font-size: 1.08em; }
+.bubble h4 { font-size: 1em; color: var(--muted); }
+.bubble ul, .bubble ol { margin: .3em 0 .7em; padding-left: 1.5em; }
+.bubble li { margin: .2em 0; }
+.bubble li > ul, .bubble li > ol { margin: .2em 0; }
+.bubble blockquote {
+  margin: .6em 0;
+  padding: .15em 0 .15em .9em;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+.bubble hr { margin: 1.1em 0; border: none; border-top: 1px solid var(--border); }
+.bubble del, .bubble s { color: var(--muted); }
+/* inline code — markdown-it emits a bare <code> (no class), so target it under .bubble */
+.bubble code {
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--code-bg);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: .92em;
+}
+/* fenced code block card: header bar (lang + Copy/Insert/Apply) above the highlighted <pre> */
+.bubble .md-code-block {
+  margin: .7em 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden; /* clip the inner pre to the rounded corners */
+  background: var(--code-bg);
+}
+.bubble .md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 5px 3px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-meta);
+}
+.bubble .md-code-lang { color: var(--muted); font-family: var(--mono); }
+.bubble .md-code-actions { display: flex; gap: 4px; flex: 0 0 auto; }
+.bubble .md-code-btn {
+  padding: 2px 8px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.bubble .md-code-btn:hover { background: var(--surface-hover); color: var(--fg); }
+.bubble .md-code-btn.copied { color: var(--success); }
+/* the <pre> inside the card: wrapper owns spacing/rounding, so reset its own */
+.bubble pre.md-code {
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 0;
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: 1.5;
+}
+.bubble pre.md-code code {
+  padding: 0;
+  background: none;
+  color: var(--fg);     /* base; Shiki's inline per-token colors override this */
+  border-radius: 0;
+  font-size: inherit;
+  white-space: pre;     /* code scrolls horizontally rather than wrapping */
+}
+.bubble table {
+  margin: .7em 0;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+  border-collapse: collapse;
+  font-size: .95em;
+}
+.bubble th, .bubble td { padding: 5px 10px; border: 1px solid var(--border); text-align: left; }
+.bubble th { background: var(--surface); font-weight: 600; }
+/* clickable file reference — distinct from external links (uses the editor's link color) */
+.bubble a.file-link {
+  color: var(--vscode-textLink-foreground, var(--link));
+  text-decoration: none;
+  cursor: pointer;
+  border-bottom: 1px dotted color-mix(in srgb, var(--vscode-textLink-foreground, var(--link)) 50%, transparent);
+}
+.bubble a.file-link:hover { text-decoration: underline; }
+/* a file path written as inline code (`Assets/Foo.cs`): clickable, but keep the code chip clean */
+.bubble code a.file-link { border-bottom: none; }
+/* GFM task lists (markdown-it-task-lists): drop the bullet, align the read-only checkbox */
+.bubble ul.contains-task-list { list-style: none; padding-left: .2em; }
+.bubble li.task-list-item { margin: .2em 0; }
+.bubble .task-list-item-checkbox {
+  margin: 0 .5em 0 0;
+  vertical-align: middle;
+  accent-color: var(--accent);
+  cursor: default;
+}
+
 /* Session history — floating popover anchored under the top bar */
 .history-panel {
   position: absolute;
@@ -1112,6 +1227,21 @@ a:hover { text-decoration: underline; }
 .composer-wrap {
   padding: 8px 0 10px;
   background: linear-gradient(to top, var(--bg) 86%, color-mix(in srgb, var(--bg) 0%, transparent));
+}
+/* "N queued" pill above the composer: rapid-fire sends accepted and waiting their turn. The dot
+   reuses .activity-working-dot's pulse so it reads as live, not a static badge. */
+.queue-indicator {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  margin: 0 4px 7px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  font-weight: 600;
 }
 .composer {
   position: relative;
