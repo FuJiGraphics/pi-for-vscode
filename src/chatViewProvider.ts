@@ -231,16 +231,41 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     const rt = await this.manager.ensureActiveRuntime();
     if (!rt?.client) return;
 
+    // Decide the streaming behavior from the state BEFORE the optimistic flip below, so the first
+    // prompt of a turn is never mis-tagged as its own follow-up.
+    const wasRunning = rt.isRunning;
     const command: PiRpcMessage = { type: "prompt", message: trimmed };
     if (imageBlocks.length > 0) command.images = imageBlocks;
-    if (rt.isRunning) {
+    if (wasRunning) {
       command.streamingBehavior = this.manager.getConfiguration().defaultStreamingBehavior;
     }
 
+    // Optimistically mark the runtime running the moment we forward the prompt. Two effects:
+    //   1) setRunning posts running:true → the webview spinner shows without waiting for pi's
+    //      agent_start to round-trip (matches the webview's own optimism; both are idempotent).
+    //   2) isRunning flips true, so a rapidly-following prompt is tagged steer/followUp and pi
+    //      ABSORBS it into the SAME run (one continuous turn) instead of spawning a fresh run per
+    //      message. pi's agent_end later resets isRunning, so a message sent after the turn truly
+    //      ended still correctly starts a new run.
+    // Rolled back below if pi rejects the prompt (it never emits agent_start/agent_end then).
+    if (!wasRunning) this.manager.setRunning(rt, true);
+
     const response = await rt.client.request(command);
     if (response.success === false) {
+      if (!wasRunning) this.manager.setRunning(rt, false);
       this.presenter.postSystem(`Prompt rejected: ${String(response.error ?? "unknown error")}`);
     }
+  }
+
+  // Insert a code snippet at the active editor's cursor (replacing any selection). No-op with a
+  // hint if no editor is focused.
+  private async insertIntoActiveEditor(text: string): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      this.presenter.postSystem("Open a file in the editor to insert code into.");
+      return;
+    }
+    await editor.edit((builder) => builder.replace(editor.selection, text));
   }
 
   private toPiImageBlocks(images: ImageAttachment[] | undefined): PiRpcMessage[] {

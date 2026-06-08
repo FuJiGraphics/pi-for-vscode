@@ -27,6 +27,7 @@ export const stopEl = byId<HTMLButtonElement>("stop");
 export const historyBtnEl = byId<HTMLButtonElement>("history");
 export const newSessionEl = byId<HTMLButtonElement>("newSession");
 export const composerWrapEl = bySelector<HTMLElement>(".composer-wrap");
+export const queueIndicatorEl = byId<HTMLElement>("queue-indicator");
 export const composerEl = byId<HTMLElement>("composer");
 export const thinkingControlEl = byId<HTMLElement>("thinkingControl");
 export const modelEl = byId<HTMLButtonElement>("model");

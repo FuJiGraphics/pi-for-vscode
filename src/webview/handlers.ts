@@ -139,10 +139,16 @@ export function handleRpcEvent(event: any): void {
         activity.expanded = true;
       }
       break;
-    case "queue_update":
-      state.status = "Queued: " + ((event.steering || []).length + (event.followUp || []).length) + " follow-up";
+    case "queue_update": {
+      // How many of the user's rapid-fire sends are still WAITING. pi removes each message from
+      // its queue the moment it starts processing it (agent-session _emitQueueUpdate fires after
+      // the dequeue), so this is a live "N not-yet-started" count — and it clears to empty once
+      // the queue drains, which hides the pill. render() reads state.status as the single source.
+      const queued = (event.steering || []).length + (event.followUp || []).length;
+      state.status = queued > 0 ? queued + " queued" : "";
       scheduleRender();
       break;
+    }
     case "compaction_start":
       recordActivity("compaction", "Compacting context", event.reason || "", "running");
       break;

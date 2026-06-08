@@ -56,6 +56,7 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
       <div id="command-list" class="command-list" role="listbox"></div>
     </section>
     <footer class="composer-wrap">
+      <div id="queue-indicator" class="queue-indicator" role="status" aria-live="polite" hidden></div>
       <div id="composer" class="composer">
         <div id="attachmentTray" class="attachment-tray" hidden></div>
         <textarea id="input" placeholder="Ask Pi to work in this project"></textarea>

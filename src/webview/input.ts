@@ -2,7 +2,7 @@
 // debounced submit that posts a prompt to the extension.
 import { state } from "./state";
 import { inputEl, sendEl } from "./dom";
-import { addMessage } from "./conversation";
+import { addMessage, setRunning } from "./conversation";
 import { refreshSendButton } from "./render";
 import { post } from "./bridge";
 import { resetScrollFollowing } from "./scroll";
@@ -57,7 +57,8 @@ export function submitInput(): void {
   submitLockedUntil = now + 350;
   state.lastSentText = text;
   state.lastSentAt = now;
-  if (!state.running) state.currentAssistantId = null;
+  const idle = !state.running;
+  if (idle) state.currentAssistantId = null;
   resetScrollFollowing();
   addMessage("user", text, { attachments: images });
   inputEl.value = "";
@@ -66,5 +67,11 @@ export function submitInput(): void {
   sendEl.classList.remove("sent");
   void sendEl.offsetWidth;
   sendEl.classList.add("sent");
+  // Optimistic working state: light the spinner the instant we send rather than waiting for pi's
+  // agent_start to round-trip back through the broker (the cold-start case is the worst gap). The
+  // real agent_start's setRunning(true) is then idempotent and reuses this bubble; a rejected
+  // prompt has the host post running:false, which prunes this still-empty bubble. Only when idle —
+  // a mid-run send already shows the spinner and the message_start{user} boundary owns the split.
+  if (idle) setRunning(true);
   post({ type: "prompt", text, images });
 }

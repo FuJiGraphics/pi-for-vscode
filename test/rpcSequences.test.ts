@@ -5,14 +5,18 @@ import assert from "node:assert/strict";
 import "./_bridgeStub";
 import "./_domStub";
 import { state, activateSession } from "../src/webview/state";
-import { addMessage } from "../src/webview/conversation";
+import { addMessage, setRunning } from "../src/webview/conversation";
 import { handleRpcEvent } from "../src/webview/handlers";
 
 // Mimic the composer send path (input.ts submitInput): a prompt sent while idle detaches the
-// previous bubble; a prompt sent mid-run keeps it (the message_start{user} boundary handles it).
+// previous bubble and OPTIMISTICALLY enters the working state (spinner shows instantly, before
+// pi's agent_start round-trips back); a prompt sent mid-run keeps the bubble and leaves running
+// alone (the message_start{user} boundary owns the split). Keep this in lockstep with submitInput.
 function sendUser(text: string): void {
-  if (!state.running) state.currentAssistantId = null;
+  const idle = !state.running;
+  if (idle) state.currentAssistantId = null;
   addMessage("user", text);
+  if (idle) setRunning(true);
 }
 
 const ev = {
@@ -31,6 +35,11 @@ const ev = {
   autoRetryEnd: () => ({ type: "auto_retry_end", success: true }),
   compactionStart: () => ({ type: "compaction_start", reason: "overflow" }),
   compactionEnd: () => ({ type: "compaction_end" }),
+  queueUpdate: (followUp: number, steering = 0) => ({
+    type: "queue_update",
+    followUp: Array.from({ length: followUp }, (_, i) => ({ role: "user", content: "f" + i })),
+    steering: Array.from({ length: steering }, (_, i) => ({ role: "user", content: "s" + i })),
+  }),
 };
 
 let sessionCounter = 0;
@@ -151,4 +160,46 @@ test("G. tool-only turn (no final text) is NOT pruned — keeps its timeline", (
   ]);
   assert.equal(assistants().length, 1); // bubble survived despite empty text
   assert.ok((assistants()[0].activity?.steps.length ?? 0) >= 1);
+});
+
+test("H. optimistic spinner: a send while idle enters the working state IMMEDIATELY (before agent_start)", () => {
+  fresh();
+  sendUser("hi"); // no agent_start replayed — the spinner must already be live
+  assert.equal(state.running, true);
+  const a = assistants();
+  assert.equal(a.length, 1);
+  assert.equal(a[0].text, ""); // empty bubble = the spinner's target
+  assert.equal(state.currentAssistantId, a[0].id);
+  assert.deepEqual(shape(), [["user", "hi"], ["assistant", ""]]);
+});
+
+test("I. optimistic rollback: a rejected prompt (host posts running:false) prunes the empty bubble", () => {
+  fresh();
+  sendUser("oops");
+  setRunning(false); // host's prompt() rolls the optimistic running back on RPC rejection
+  assert.equal(state.running, false);
+  assert.equal(assistants().length, 0); // empty optimistic bubble pruned, no orphan spinner
+  assert.deepEqual(shape(), [["user", "oops"]]);
+});
+
+test("J. optimistic then real stream: agent_start is idempotent, no duplicate bubble", () => {
+  fresh();
+  sendUser("go"); // optimistic: running + empty A1
+  const optimisticId = state.currentAssistantId;
+  replay([ev.agentStart(), ev.userStart("go"), ev.delta("ok"), ev.asstEnd("OK."), ev.agentEnd()]);
+  assert.deepEqual(shape(), [["user", "go"], ["assistant", "OK."]]);
+  assert.equal(assistants().length, 1); // reused the optimistic bubble, did not stack a second
+  assert.equal(assistants()[0].id, optimisticId);
+});
+
+test("K. queue_update drives the queued-sends count (steering + followUp) and clears on drain", () => {
+  fresh();
+  sendUser("u1");
+  replay([ev.agentStart(), ev.userStart("u1")]);
+  replay([ev.queueUpdate(2, 1)]); // 2 follow-ups + 1 steering still waiting
+  assert.equal(state.status, "3 queued");
+  replay([ev.queueUpdate(1)]);
+  assert.equal(state.status, "1 queued");
+  replay([ev.queueUpdate(0)]); // drained → pill hides
+  assert.equal(state.status, "");
 });
