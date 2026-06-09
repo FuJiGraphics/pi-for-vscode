@@ -36,6 +36,16 @@ pi-for-vscode는 "Pi Coding Agent"용 **네이티브 VS Code webview 클라이�
 | [src/piRpcClient.ts](src/piRpcClient.ts) | line-delimited JSON-RPC 클라이언트 (`send` / `request`) |
 | [src/sessionStore.ts](src/sessionStore.ts) | Pi 세션 읽기 (`~/.pi/agent/sessions/*.jsonl`) |
 
+## Pi-native auth/model 경계
+
+- 모델 목록은 `pi --list-models`를 파싱하지 않고, 활성 RPC 세션의 `get_available_models`를 사용한다.
+- 모델 전환은 broker가 가로채 재시작하지 않고, Pi RPC `set_model { provider, modelId }`를 그대로 통과시킨다.
+- provider API key/OAuth는 VS Code SecretStorage에 저장하지 않는다. Pi의 `ctx.modelRegistry.authStorage`와
+  `~/.pi/agent/auth.json`이 권위자다.
+- VS Code에서 필요한 `/login`/`/logout` UX는 `resources/pi-extensions/vscode-auth-bridge.ts`를 `-e`로만
+  로드해 제공한다. 이 bridge는 사용자 Pi settings에 설치하지 않는다.
+- Pi가 공식 auth RPC를 제공하면 bridge만 제거/대체하고 webview UX와 broker 구조는 유지한다.
+
 메시지 프로토콜은 두 층이다:
 
 1. **webview ↔ host** — `WebviewToExtensionMessage` / `ExtensionToWebviewMessage` 타입 유니온.
@@ -53,7 +63,7 @@ pi-for-vscode는 "Pi Coding Agent"용 **네이티브 VS Code webview 클라이�
   모호한 `Manager·Helper·Util` 없이 못 짓거나, 무관한 기능 변경이 같은 파일에 자꾸 떨어지거나, 한
   부분만 테스트하려는데 무관한 셋업이 필요하면 — 떼어낼 신호다. 새 책임은 볼트로 붙이지 말고 제
   단위로(webview 표현(`WebviewPresenter`) ↔ 런타임 수명주기(`SessionRuntimeManager`) ↔ RPC 이벤트
-  (`RpcEventRouter`) ↔ 모델/BYOK(`ModelService`/`ModelSecretsStore`) ↔ 세션 CRUD(`SessionCrudService`)
+  (`RpcEventRouter`) ↔ 모델 RPC(`ModelService`) ↔ Pi 인증 bridge(`resources/pi-extensions/vscode-auth-bridge.ts`) ↔ 세션 CRUD(`SessionCrudService`)
   는 서로 다른 단위). 단 소비자 없는 투기적 계층은 금지(확장성 적정선). `scripts/lint-size.mjs`가
   `src/*.ts` 400줄을 강제한다(응집된 대형 모듈만 grandfather). god file 신호는
   [docs/grounded-implementation.md](docs/grounded-implementation.md) 3단계.
@@ -68,7 +78,7 @@ pi-for-vscode는 "Pi Coding Agent"용 **네이티브 VS Code webview 클라이�
 ## 패키징 경계 — 무엇이 "사용자 Pi 프롬프트"에 실리나
 
 이 확장은 얇은 래퍼다. broker는 **사용자 워크스페이스를 cwd로** `pi --mode rpc`를 띄운다
-([src/piBroker.ts](src/piBroker.ts)의 argv: `--mode rpc` + (`--no-session`) + (`--model`) +
+([src/piBroker.ts](src/piBroker.ts)의 argv: `--mode rpc` + (`--no-session`) +
 `extraArgs`). 그래서 Pi가 기본 자동탐색하는 스킬·`AGENTS.md`·`CLAUDE.md`는 **사용자 프로젝트의
 것**이지 이 repo의 것이 아니다(`pi`의 `--no-skills` / `--no-context-files`로 끌 수 있음). 이 repo의
 dev 지침은 사용자 cwd에 없으니 사용자 Pi 프롬프트에 절대 들어가지 않는다.

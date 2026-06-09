@@ -66,6 +66,11 @@ webview는 로컬 UI 상태만 들고, 진실은 host(설정 + Pi 세션)에 있
 
 - `PiRpcClient.send(command)` — fire-and-forget. 응답을 기다리지 않는다.
 - `PiRpcClient.request(command, timeoutMs = 30_000)` — `id` 기반 요청/응답. Promise 반환.
+- broker는 transport/control 명령(`ping`, `broker_shutdown`)만 직접 처리한다. Pi 명령(`set_model`,
+  `get_available_models`, extension command prompt 등)은 Pi stdin으로 그대로 통과시킨다.
+- 모델 목록/전환은 Pi 공식 RPC를 따른다: `get_available_models`, `set_model { provider, modelId }`.
+- provider 인증은 VS Code SecretStorage/env 주입이 아니라 Pi `authStorage`와 bundled auth bridge(`/login`,
+  `/logout`)를 통해 처리한다.
 - 와이어 포맷: broker 소켓 위 **line-delimited JSON**(한 줄당 JSON 한 개).
 - Pi가 올려보내는 이벤트는 host가 받아 webview에 `{ type: "rpcEvent", event }`로 포워딩한다.
   주요 이벤트: `agent_start`, `agent_end`, `message_update`, `message_end`,

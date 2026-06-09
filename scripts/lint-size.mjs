@@ -15,10 +15,18 @@ const GRANDFATHERED = new Set([
   "src/webview/render.ts", // two-tier DOM render/paint orchestration; pure builders live in cards.ts, ~450 lines
 ]);
 
-const files = execFileSync("git", ["ls-files", "src"], { encoding: "utf8" })
-  .trim()
-  .split("\n")
-  .filter((f) => f.endsWith(".ts") && !GRANDFATHERED.has(f));
+function gitFiles(args) {
+  return execFileSync("git", args, { encoding: "utf8" })
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+}
+
+const files = [...new Set([
+  ...gitFiles(["ls-files", "src"]),
+  ...gitFiles(["ls-files", "--others", "--exclude-standard", "src"]),
+])]
+  .filter((f) => f.endsWith(".ts") && fs.existsSync(f) && !GRANDFATHERED.has(f));
 
 const offenders = [];
 for (const file of files) {

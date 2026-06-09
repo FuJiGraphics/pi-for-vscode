@@ -16,6 +16,17 @@ This is controlled by `pi-for-vscode.useBundledPi` (`auto` | `always` | `never`)
 
 The bundled agent runs under VS Code's own Node runtime when it satisfies pi's engine floor (Node ≥ 22.19); otherwise a system `node` is used. macOS and Windows are supported today (Linux is pending an upstream prebuild).
 
+## Authentication and models
+
+VS Code is only the UI shell. Pi owns provider credentials, model registration, package discovery, skills, and sessions.
+
+- Model lists come from Pi RPC `get_available_models`.
+- Model switching uses Pi RPC `set_model` with `{ provider, modelId }`.
+- Provider login/logout runs inside the active Pi RPC session via bundled `/login` and `/logout` bridge commands.
+- API keys and OAuth credentials are stored by Pi in its normal `~/.pi/agent/auth.json`; this extension does not store provider keys in VS Code SecretStorage.
+
+If Pi later exposes official auth RPC commands, the bridge can be removed without changing the webview flow.
+
 ## Bundled tools
 
 Two validated pi extensions ship with the agent so common capabilities work out of the box:

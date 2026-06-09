@@ -27,7 +27,7 @@
   **각각 어디에 둘지**. 의식(儀式)이 아니라, 재사용·배치 결정을 코드가 생기기 전(=공짜일 때) 끝내려는
   것이다.
 - 이 프로젝트의 재사용 대상 예: 세션 내용은 [../src/sessionStore.ts](../src/sessionStore.ts), 모델
-  목록은 `modelStore.listPiModels`, 모델 전환은 기존 `setModel` 경로, webview↔host 메시지는
+  목록은 활성 Pi RPC `get_available_models`, 모델 전환은 `set_model { provider, modelId }`, webview↔host 메시지는
   [../src/protocol.ts](../src/protocol.ts)의 타입 유니온, 커맨드 추가는
   [vscode-extension.md](vscode-extension.md)의 "동시 갱신" 절차.
 
