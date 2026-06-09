@@ -1,7 +1,6 @@
 // Claude / VS Code-style model picker: a floating dropdown anchored to the
-// #model button. Lists pi's available models (from `pi --list-models`), lets you
-// switch model (pi restarts + the session is restored), and add a BYOK provider
-// API key. Mirrors the history popover pattern in history.ts.
+// #model button. Lists Pi's available models from `get_available_models`, lets
+// Pi switch model through `set_model`, and opens Pi-owned auth commands.
 import { appEl, modelEl, modelListEl, modelPanelEl, modelSearchEl } from "./dom";
 import { post } from "./bridge";
 import { escapeHtml } from "./util";
@@ -14,17 +13,14 @@ export function isModelPickerOpen(): boolean {
 }
 
 export function openModelPicker(): void {
-  appEl.classList.remove("history-open"); // mutually exclusive with the history popover
-  appEl.classList.remove("command-open"); // and with the slash-command palette
+  appEl.classList.remove("history-open");
+  appEl.classList.remove("command-open");
   appEl.classList.add("model-open");
   modelSearchEl.value = "";
-  // Cache models across opens (mirrors commandMenu's `loaded` pattern): only show the
-  // loading state + request `pi --list-models` the first time. Subsequent opens render
-  // the cached list instantly, so the picker no longer flashes "Loading…" every time.
   if (allModels.length > 0) {
     applyFilter();
   } else {
-    modelListEl.innerHTML = '<div class="model-empty">Loading models…</div>';
+    modelListEl.innerHTML = '<div class="model-empty">Loading models...</div>';
     post({ type: "requestModels" });
   }
   modelSearchEl.focus();
@@ -39,20 +35,25 @@ export function toggleModelPicker(): void {
   else openModelPicker();
 }
 
-const ADD_KEY_HTML =
-  '<button class="model-item model-add" data-action="add-key"><div class="model-main">' +
-  '<div class="model-title">＋ Add provider API key…</div>' +
-  '<div class="model-meta">Bring your own key (OpenAI, Anthropic, Google…)</div></div></button>';
+const AUTH_ACTIONS_HTML =
+  '<button class="model-item model-add" data-action="login"><div class="model-main">' +
+  '<div class="model-title">Sign in or add provider key</div>' +
+  '<div class="model-meta">Uses Pi authentication</div></div></button>' +
+  '<button class="model-item model-add secondary" data-action="logout"><div class="model-main">' +
+  '<div class="model-title">Sign out provider</div>' +
+  '<div class="model-meta">Removes credentials from Pi</div></div></button>';
 
 function itemHtml(model: ModelListItem): string {
   return (
     '<button class="model-item' +
     (model.isCurrent ? " current" : "") +
-    '" data-id="' +
-    escapeHtml(model.id) +
+    '" data-provider="' +
+    escapeHtml(model.provider) +
+    '" data-model-id="' +
+    escapeHtml(model.modelId) +
     '"><div class="model-main"><div class="model-title">' +
     escapeHtml(model.model) +
-    (model.isCurrent ? '<span class="current-tag"> ✓</span>' : "") +
+    (model.isCurrent ? '<span class="current-tag"> Current</span>' : "") +
     '</div><div class="model-meta">' +
     escapeHtml(model.provider) +
     (model.thinking ? '<span class="model-cap">thinking</span>' : "") +
@@ -63,17 +64,17 @@ function itemHtml(model: ModelListItem): string {
 function applyFilter(): void {
   const query = modelSearchEl.value.trim().toLowerCase();
   const filtered = query
-    ? allModels.filter((m) => (m.model + " " + m.provider + " " + m.id).toLowerCase().includes(query))
+    ? allModels.filter((m) => (m.model + " " + m.provider + " " + m.modelId + " " + m.id).toLowerCase().includes(query))
     : allModels;
   if (filtered.length === 0) {
     modelListEl.innerHTML =
       '<div class="model-empty">' +
-      (allModels.length === 0 ? "No models available. Add a provider key below." : "No models match your search.") +
+      (allModels.length === 0 ? "No models available. Sign in or add a provider key below." : "No models match your search.") +
       "</div>" +
-      ADD_KEY_HTML;
+      AUTH_ACTIONS_HTML;
     return;
   }
-  modelListEl.innerHTML = filtered.map(itemHtml).join("") + ADD_KEY_HTML;
+  modelListEl.innerHTML = filtered.map(itemHtml).join("") + AUTH_ACTIONS_HTML;
 }
 
 export function renderModelList(models: ModelListItem[]): void {
@@ -83,21 +84,22 @@ export function renderModelList(models: ModelListItem[]): void {
 
 function handleListClick(event: MouseEvent): void {
   const target = event.target as HTMLElement | null;
-  const addBtn = target && target.closest ? (target.closest('[data-action="add-key"]') as HTMLElement | null) : null;
-  if (addBtn) {
+  const actionBtn = target && target.closest ? (target.closest("[data-action]") as HTMLElement | null) : null;
+  const action = actionBtn?.dataset.action;
+  if (action === "login" || action === "logout") {
     event.stopPropagation();
-    post({ type: "addProviderKey" });
+    post({ type: action });
     closeModelPicker();
     return;
   }
+
   const item = target && target.closest ? (target.closest(".model-item") as HTMLElement | null) : null;
   if (!item) return;
-  const id = item.dataset.id;
-  if (!id) return;
-  // Move the ✓ marker to the picked model locally so the cached list stays accurate
-  // without a re-fetch on the next open (the host doesn't re-send the list after setModel).
-  allModels = allModels.map((m) => ({ ...m, isCurrent: m.id === id }));
-  post({ type: "setModel", modelId: id });
+  const provider = item.dataset.provider;
+  const modelId = item.dataset.modelId;
+  if (!provider || !modelId) return;
+  allModels = allModels.map((m) => ({ ...m, isCurrent: m.provider === provider && m.modelId === modelId }));
+  post({ type: "setModel", provider, modelId });
   closeModelPicker();
 }
 

@@ -14,10 +14,6 @@ interface BrokerConfig {
   cwd?: string;
   persistSessions: boolean;
   extraArgs: string[];
-  /** Mutable: pi's --model (qualified "provider/id[:thinking]"); changed via set_model. */
-  model?: string;
-  /** Mutable: BYOK API keys injected into the pi child env, keyed by env var name. */
-  secrets?: Record<string, string>;
   idleTimeoutMs: number;
   logPath?: string;
 }
@@ -53,8 +49,6 @@ function readConfig(): BrokerConfig {
     cwd: parsed.cwd,
     persistSessions: parsed.persistSessions ?? true,
     extraArgs: Array.isArray(parsed.extraArgs) ? parsed.extraArgs : [],
-    model: typeof parsed.model === "string" ? parsed.model : undefined,
-    secrets: parsed.secrets && typeof parsed.secrets === "object" ? (parsed.secrets as Record<string, string>) : undefined,
     idleTimeoutMs: typeof parsed.idleTimeoutMs === "number" ? parsed.idleTimeoutMs : 30 * 60 * 1000,
     logPath: parsed.logPath,
   };
@@ -78,16 +72,10 @@ function startPi(): void {
 
   const args = ["--mode", "rpc"];
   if (!config.persistSessions) args.push("--no-session");
-  if (config.model) args.push("--model", config.model);
   args.push(...config.extraArgs);
 
   const env = { ...process.env };
   delete env.PI_FOR_VSCODE_BROKER_CONFIG;
-  if (config.secrets) {
-    for (const [name, value] of Object.entries(config.secrets)) {
-      if (typeof value === "string" && value) env[name] = value;
-    }
-  }
 
   let command: string;
   let commandArgs: string[];
@@ -118,8 +106,6 @@ function startPi(): void {
   piProcess = proc;
 
   proc.stdout.on("data", (chunk: Buffer) => {
-    // Ignore late output from a process we deliberately replaced (model restart),
-    // so it can't corrupt the new pi's shared stdout buffer or agent-running state.
     if (piProcess !== proc) return;
     handlePiStdout(chunk);
   });
@@ -132,7 +118,6 @@ function startPi(): void {
     broadcastJson({ type: "broker_error", error: error.message });
   });
   proc.on("close", (code, signal) => {
-    // Ignore the close of a process we deliberately replaced (model restart).
     if (piProcess !== proc) return;
     log(`Pi process closed (${code ?? "null"}${signal ? `, ${signal}` : ""})`);
     isAgentRunning = false;
@@ -140,17 +125,6 @@ function startPi(): void {
     broadcastJson({ type: "broker_pi_close", code, signal });
     scheduleIdleShutdown();
   });
-}
-
-// Kill and respawn pi with the current config (used after a model change). The
-// guard in the close handler suppresses the broker_pi_close/idle for the old
-// process, so clients stay connected across the swap.
-function restartPi(): void {
-  const old = piProcess;
-  piProcess = undefined;
-  isAgentRunning = false;
-  if (old && !old.killed) old.kill();
-  startPi();
 }
 
 function handlePiStdout(chunk: Buffer): void {
@@ -237,21 +211,6 @@ function handleClientLine(socket: net.Socket, line: string): void {
   if (command.type === "broker_shutdown") {
     socket.write(`${JSON.stringify({ type: "response", id: command.id, command: "broker_shutdown", success: true })}\n`);
     void shutdown(0);
-    return;
-  }
-
-  if (command.type === "set_model") {
-    if (typeof command.model === "string") config.model = command.model;
-    else if (command.model === null) config.model = undefined;
-    // Merge non-empty secret sets; a transient empty {} must not wipe live keys.
-    // Pass null to explicitly clear.
-    if (command.secrets === null) {
-      config.secrets = undefined;
-    } else if (command.secrets && typeof command.secrets === "object" && Object.keys(command.secrets).length > 0) {
-      config.secrets = { ...config.secrets, ...(command.secrets as Record<string, string>) };
-    }
-    restartPi();
-    socket.write(`${JSON.stringify({ type: "response", id: command.id, command: "set_model", success: true })}\n`);
     return;
   }
 

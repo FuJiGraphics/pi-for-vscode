@@ -11,7 +11,6 @@ import type { PiConfiguration, SessionRuntime } from "./sessionRuntime";
 import type { WebviewPresenter } from "./webviewPresenter";
 import type { RpcEventRouter, RpcEventSink } from "./rpcEventRouter";
 import type { BundledExtensionResolver } from "./bundledExtensionResolver";
-import type { ModelSecretsStore } from "./modelSecretsStore";
 
 // Owns the runtime map + the active-runtime pointer and the entire per-session lifecycle:
 // spawn / connect / revive / switch-away / disconnect / reap, plus the pi state reads and
@@ -26,7 +25,6 @@ export class SessionRuntimeManager {
     private readonly presenter: WebviewPresenter,
     private readonly events: RpcEventRouter,
     private readonly bundled: BundledExtensionResolver,
-    private readonly secretsStore: ModelSecretsStore,
   ) {}
 
   get active(): SessionRuntime | undefined {
@@ -182,14 +180,13 @@ export class SessionRuntimeManager {
   }
 
   // Build a brand-new runtime (fresh instanceId → its own broker/socket/pi) and connect it.
-  async createRuntime(cwd: string, model?: string): Promise<SessionRuntime | undefined> {
+  async createRuntime(cwd: string): Promise<SessionRuntime | undefined> {
     const rt: SessionRuntime = {
       id: randomUUID(),
       client: undefined,
       cwd,
       sessionFile: undefined,
       isRunning: false,
-      model: model ?? this.secretsStore.selectedModelDefault(),
       pendingUiRequest: undefined,
       disposables: [],
     };
@@ -221,8 +218,6 @@ export class SessionRuntimeManager {
       cwd: rt.cwd,
       persistSessions: config.persistSessions,
       extraArgs: [...bundledArgs, ...config.extraArgs],
-      model: rt.model ?? this.secretsStore.selectedModelDefault(),
-      secrets: await this.secretsStore.getSecretsEnv(),
       brokerScriptPath: vscode.Uri.joinPath(this.context.extensionUri, "out", "piBroker.js").fsPath,
       brokerStoragePath: this.context.globalStorageUri.fsPath,
       brokerIdleTimeoutMs: config.brokerIdleTimeoutMinutes * 60 * 1000,
@@ -256,7 +251,7 @@ export class SessionRuntimeManager {
     this.disconnectRuntime(rt);
   }
 
-  // Drop the live connection but keep a lightweight stub (id/sessionFile/model) in the map.
+  // Drop the live connection but keep a lightweight stub (id/sessionFile) in the map.
   // The detached broker, now client-less and idle, reaps its pi after brokerIdleTimeoutMs.
   private disconnectRuntime(rt: SessionRuntime): void {
     for (const disposable of rt.disposables.splice(0)) disposable.dispose();

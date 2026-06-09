@@ -1,94 +1,127 @@
-import * as vscode from "vscode";
-import { resolvePiRuntime } from "./piResolver";
-import { listPiModels, PROVIDER_ENV_VARS, type PiModel } from "./modelStore";
-import type { ModelListItem } from "./protocol";
 import type { PiRpcClient } from "./piRpcClient";
+import type { ModelListItem } from "./protocol";
+import { asRecord } from "./sessionFormat";
 import type { SessionRuntime } from "./sessionRuntime";
 import type { WebviewPresenter } from "./webviewPresenter";
-import type { ModelSecretsStore } from "./modelSecretsStore";
-import { asRecord } from "./sessionFormat";
-import { readSessionFile } from "./stateHelpers";
-import { getWorkspaceCwd } from "./workspace";
 
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
 
-/** Case-insensitive match of a model against the "current" reference (id / model / id-suffix). */
-export function isCurrentModel(model: PiModel, ref: string | undefined): boolean {
-  if (!ref) return false;
-  const r = ref.toLowerCase();
-  return model.id.toLowerCase() === r || model.model.toLowerCase() === r || model.id.toLowerCase().endsWith("/" + r);
+function stringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-/** Manager surface the model service borrows to reach the active runtime + reseed after a restart. */
+function supportsThinking(model: Record<string, unknown>): boolean {
+  if (model.reasoning === true) return true;
+  const map = asRecord(model.thinkingLevelMap);
+  return Boolean(map && Object.values(map).some((value) => value !== null && value !== false));
+}
+
+/** Case-insensitive match against Pi's current full Model object. */
+export function isCurrentModelItem(item: Pick<ModelListItem, "provider" | "modelId" | "id">, currentModel: unknown): boolean {
+  const current = asRecord(currentModel);
+  const currentProvider = stringField(current, "provider")?.toLowerCase();
+  const currentId = stringField(current, "id")?.toLowerCase();
+  if (!currentId) return false;
+
+  const provider = item.provider.toLowerCase();
+  const modelId = item.modelId.toLowerCase();
+  const qualified = item.id.toLowerCase();
+  if (currentProvider) return currentProvider === provider && (currentId === modelId || currentId === qualified);
+  return currentId === modelId || currentId === qualified;
+}
+
+/** Pure mapper from Pi's `get_available_models` full model objects to picker rows. */
+export function modelListItemsFromRpc(models: unknown, currentModel?: unknown): ModelListItem[] {
+  if (!Array.isArray(models)) return [];
+
+  const items: ModelListItem[] = [];
+  for (const value of models) {
+    const model = asRecord(value);
+    if (!model) continue;
+    const provider = stringField(model, "provider");
+    const modelId = stringField(model, "id");
+    if (!provider || !modelId) continue;
+
+    const id = `${provider}/${modelId}`;
+    const label = stringField(model, "name") ?? stringField(model, "displayName") ?? modelId;
+    const item: ModelListItem = {
+      id,
+      modelId,
+      model: label,
+      provider,
+      thinking: supportsThinking(model),
+      isCurrent: false,
+    };
+    item.isCurrent = isCurrentModelItem(item, currentModel);
+    items.push(item);
+  }
+  return items;
+}
+
+/** Manager surface the model service borrows to reach the active runtime. */
 export interface ModelServiceDeps {
   ensureActiveRuntime(): Promise<SessionRuntime | undefined>;
-  activeRuntime(): SessionRuntime | undefined;
   requestState(client: PiRpcClient): Promise<Record<string, unknown> | undefined>;
-  setRunning(rt: SessionRuntime, value: boolean): void;
-  seedRuntime(rt: SessionRuntime, force?: boolean): Promise<void>;
   postState(): Promise<unknown>;
-  isCurrentWorkspaceSession(sessionPath: string): Promise<boolean>;
   reportRuntimeError(error: unknown): void;
 }
 
-// Model selection, thinking level, BYOK key entry, and the model picker list. Persistence
-// lives in ModelSecretsStore (leaf); runtime reach-through goes via ModelServiceDeps.
+// Model picker + switching through Pi's official RPC. Pi owns auth, providers,
+// and model persistence; the VS Code side only renders and forwards choices.
 export class ModelService {
   constructor(
-    private readonly context: vscode.ExtensionContext,
     private readonly presenter: WebviewPresenter,
-    private readonly secrets: ModelSecretsStore,
     private readonly deps: ModelServiceDeps,
   ) {}
 
   async postModelList(): Promise<void> {
-    let runtime;
-    try {
-      runtime = await resolvePiRuntime(this.context);
-    } catch (error) {
+    const rt = await this.deps.ensureActiveRuntime().catch((error) => {
       this.deps.reportRuntimeError(error);
+      return undefined;
+    });
+    const client = rt?.client;
+    if (!client) {
       this.presenter.post({ type: "modelList", models: [] });
       return;
     }
-    const cwd = getWorkspaceCwd();
-    const secrets = await this.secrets.getSecretsEnv();
-    const models = await listPiModels(runtime, { cwd, secrets });
-    const currentRef = await this.currentModelRef();
-    const items: ModelListItem[] = models.map((model) => ({
-      id: model.id,
-      model: model.model,
-      provider: model.provider,
-      thinking: model.thinking,
-      isCurrent: isCurrentModel(model, currentRef),
-    }));
-    this.presenter.post({ type: "modelList", models: items });
+
+    try {
+      const [modelsResponse, state] = await Promise.all([
+        client.request({ type: "get_available_models" }, 15_000),
+        this.deps.requestState(client),
+      ]);
+      if (modelsResponse.success === false) {
+        this.presenter.postSystem(`Failed to load models: ${String(modelsResponse.error ?? "unknown error")}`);
+        this.presenter.post({ type: "modelList", models: [] });
+        return;
+      }
+
+      const data = asRecord(modelsResponse.data);
+      const models = Array.isArray(data?.models) ? data.models : modelsResponse.data;
+      this.presenter.post({ type: "modelList", models: modelListItemsFromRpc(models, asRecord(state)?.model) });
+    } catch (error) {
+      this.presenter.postSystem(`Failed to load models: ${error instanceof Error ? error.message : String(error)}`);
+      this.presenter.post({ type: "modelList", models: [] });
+    }
   }
 
-  async setModel(modelId: string): Promise<void> {
-    if (!modelId) return;
+  async setModel(provider: string, modelId: string): Promise<void> {
+    const providerId = provider.trim();
+    const id = modelId.trim();
+    if (!providerId || !id) return;
+
     const rt = await this.deps.ensureActiveRuntime();
     if (!rt?.client) return;
 
-    // Capture the active session so we can restore it after this runtime's pi restarts.
-    const sessionFile = readSessionFile(await this.deps.requestState(rt.client));
-
-    const secrets = await this.secrets.getSecretsEnv();
-    const response = await rt.client.request({ type: "set_model", model: modelId, secrets }, 30_000);
+    const response = await rt.client.request({ type: "set_model", provider: providerId, modelId: id }, 30_000);
     if (response.success === false) {
       this.presenter.postSystem(`Failed to switch model: ${String(response.error ?? "unknown error")}`);
       return;
     }
-    // Per-runtime model — set_model only restarts THIS runtime's broker's pi, so other
-    // sessions are unaffected. The global key is just the default seed for new runtimes.
-    rt.model = modelId;
-    await this.secrets.setSelectedModel(modelId);
 
-    this.deps.setRunning(rt, false);
-    if (sessionFile && await this.deps.isCurrentWorkspaceSession(sessionFile)) {
-      await rt.client.request({ type: "switch_session", sessionPath: sessionFile }, 30_000).catch(() => undefined);
-    }
-    // The pi restarted on the new model — re-seed this session's view (model + messages).
-    await this.deps.seedRuntime(rt, true);
+    await this.deps.postState();
+    await this.postModelList();
   }
 
   async setThinkingLevel(level: string): Promise<void> {
@@ -104,42 +137,5 @@ export class ModelService {
       return;
     }
     await this.deps.postState();
-  }
-
-  async addProviderKey(): Promise<void> {
-    const providers = Object.keys(PROVIDER_ENV_VARS).sort();
-    const provider = await vscode.window.showQuickPick(providers, {
-      title: "Add Provider API Key",
-      placeHolder: "Select the provider whose API key you want to add (BYOK)",
-    });
-    if (!provider) return;
-    const envVar = PROVIDER_ENV_VARS[provider];
-    const key = await vscode.window.showInputBox({
-      title: `${provider} API key`,
-      prompt: `Stored securely in VS Code; passed to pi as ${envVar}.`,
-      password: true,
-      ignoreFocusOut: true,
-    });
-    if (!key || !key.trim()) return;
-
-    await this.secrets.storeProviderKey(envVar, key.trim());
-    this.presenter.postSystem(`Saved ${provider} API key. Pick one of its models to start using it.`);
-    await this.postModelList();
-  }
-
-  private async currentModelRef(): Promise<string | undefined> {
-    // Prefer the active session's own model so the picker's current marker reflects
-    // what the visible session is using, not just the global default.
-    const activeModel = this.deps.activeRuntime()?.model;
-    if (activeModel) return activeModel;
-    const stored = this.secrets.storedModel();
-    if (stored) return stored;
-    const client = this.deps.activeRuntime()?.client;
-    if (!client?.isStarted) return undefined;
-    const state = await this.deps.requestState(client);
-    const model = asRecord(state?.model);
-    if (typeof model?.id === "string") return model.id;
-    if (typeof model?.name === "string") return model.name;
-    return undefined;
   }
 }

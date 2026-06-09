@@ -55,6 +55,7 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
     <section id="command-panel" class="command-panel" aria-label="Slash commands">
       <div id="command-list" class="command-list" role="listbox"></div>
     </section>
+    <div id="extension-ui-root" class="extension-ui-root" aria-live="polite"></div>
     <footer class="composer-wrap">
       <div id="queue-indicator" class="queue-indicator" role="status" aria-live="polite" hidden></div>
       <div id="composer" class="composer">

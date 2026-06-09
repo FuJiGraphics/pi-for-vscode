@@ -1,7 +1,6 @@
 import * as vscode from "vscode";
 import { repairBundledPi } from "./piResolver";
 import { BundledExtensionResolver } from "./bundledExtensionResolver";
-import { ModelSecretsStore } from "./modelSecretsStore";
 import { WebviewPresenter } from "./webviewPresenter";
 import { RpcEventRouter } from "./rpcEventRouter";
 import { CommandPaletteService } from "./commandPaletteService";
@@ -23,7 +22,6 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
   private readonly presenter = new WebviewPresenter();
   private readonly events = new RpcEventRouter(this.presenter);
   private readonly bundled: BundledExtensionResolver;
-  private readonly secretsStore: ModelSecretsStore;
   private readonly manager: SessionRuntimeManager;
   private readonly models: ModelService;
   private readonly commandPalette: CommandPaletteService;
@@ -31,18 +29,13 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.bundled = new BundledExtensionResolver(context);
-    this.secretsStore = new ModelSecretsStore(context);
-    this.manager = new SessionRuntimeManager(context, this.presenter, this.events, this.bundled, this.secretsStore);
+    this.manager = new SessionRuntimeManager(context, this.presenter, this.events, this.bundled);
     // The router calls back into the manager (runtime map owner). Bound once, after both exist.
     this.events.bind(this.manager.eventSink());
-    this.models = new ModelService(context, this.presenter, this.secretsStore, {
+    this.models = new ModelService(this.presenter, {
       ensureActiveRuntime: () => this.manager.ensureActiveRuntime(),
-      activeRuntime: () => this.manager.active,
       requestState: (client) => this.manager.requestState(client),
-      setRunning: (rt, value) => this.manager.setRunning(rt, value),
-      seedRuntime: (rt, force) => this.manager.seedRuntime(rt, force),
       postState: () => this.manager.postState(),
-      isCurrentWorkspaceSession: (sessionPath) => this.manager.isCurrentWorkspaceSession(sessionPath),
       reportRuntimeError: (error) => this.manager.reportRuntimeError(error),
     });
     this.commandPalette = new CommandPaletteService(this.presenter, {
@@ -180,19 +173,25 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
           await this.commandPalette.postCommandList();
           return;
         case "setModel":
-          await this.models.setModel(message.modelId);
+          await this.models.setModel(message.provider, message.modelId);
           return;
         case "setThinkingLevel":
           await this.models.setThinkingLevel(message.level);
           return;
-        case "addProviderKey":
-          await this.models.addProviderKey();
+        case "login":
+          await this.runAuthCommand("/login");
+          return;
+        case "logout":
+          await this.runAuthCommand("/logout");
           return;
         case "getState":
           await this.manager.postState();
           return;
         case "copy":
           await vscode.env.clipboard.writeText(message.text ?? "");
+          return;
+        case "openExternal":
+          await this.openExternal(message.url);
           return;
         case "openFile":
           await openWorkspaceFile(message.path, message.line, message.col);
@@ -221,6 +220,20 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     } catch (error) {
       this.presenter.postSystem(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  private async runAuthCommand(command: "/login" | "/logout"): Promise<void> {
+    await this.prompt(command);
+    await this.manager.postState();
+    await this.models.postModelList();
+  }
+
+  private async openExternal(url: string): Promise<void> {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    const uri = vscode.Uri.parse(trimmed, true);
+    if (uri.scheme !== "http" && uri.scheme !== "https") return;
+    await vscode.env.openExternal(uri);
   }
 
   private async prompt(text: string, images?: ImageAttachment[]): Promise<void> {

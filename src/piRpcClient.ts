@@ -32,10 +32,6 @@ export interface PiRpcClientOptions {
   cwd?: string;
   persistSessions: boolean;
   extraArgs: string[];
-  /** Initial pi model (qualified "provider/id[:thinking]"); switched at runtime via set_model. */
-  model?: string;
-  /** BYOK API keys injected into the pi child env, keyed by env var name. */
-  secrets?: Record<string, string>;
   brokerScriptPath: string;
   brokerStoragePath: string;
   brokerIdleTimeoutMs: number;
@@ -391,8 +387,6 @@ export class PiRpcClient implements vscode.Disposable {
       cwd: this.options.cwd,
       persistSessions: this.options.persistSessions,
       extraArgs: this.options.extraArgs,
-      model: this.options.model,
-      secrets: this.options.secrets,
       idleTimeoutMs: this.options.brokerIdleTimeoutMs,
       logPath: this.getBrokerLogPath(),
     };
