@@ -116,7 +116,7 @@ export interface PiRpcResponse {
 // Used by piBroker.handleClientLine to separate broker vocabulary from pi
 // passthrough — keep in sync with the cases in handleClientLine.
 // (`ping` is the transport keepalive: answered directly, never reaches pi.)
-export const BROKER_COMMANDS: ReadonlySet<string> = new Set(["ping", "broker_shutdown", "set_model"]);
+export const BROKER_COMMANDS: ReadonlySet<string> = new Set(["ping", "broker_shutdown"]);
 
 // Commands that must NOT respawn a dead pi process (they are read-only / control
 // only). Restarting pi on these would auto-resume an interrupted session and
@@ -136,10 +136,13 @@ export interface SessionListItem {
 }
 
 export interface ModelListItem {
-  /** Qualified id passed back to pi via --model, e.g. "openai-codex/gpt-5.5". */
+  /** Stable webview id, qualified as "<provider>/<modelId>". */
   id: string;
-  /** Bare model id shown as the title, e.g. "gpt-5.5". */
+  /** Bare Pi model id sent to `set_model`, e.g. "claude-sonnet-4-20250514". */
+  modelId: string;
+  /** Display label shown as the title, usually Pi's full model name. */
   model: string;
+  /** Pi provider id sent to `set_model`, e.g. "anthropic". */
   provider: string;
   /** Whether the model supports a thinking level (capability flag). */
   thinking: boolean;
@@ -177,11 +180,13 @@ export type WebviewToExtensionMessage =
   | { type: "renameSession"; sessionPath: string; name: string }
   | { type: "requestModels" }
   | { type: "requestCommands" }
-  | { type: "setModel"; modelId: string }
+  | { type: "setModel"; provider: string; modelId: string }
   | { type: "setThinkingLevel"; level: string }
-  | { type: "addProviderKey" }
+  | { type: "login" }
+  | { type: "logout" }
   | { type: "getState" }
   | { type: "copy"; text?: string }
+  | { type: "openExternal"; url: string }
   // Open a workspace file the user clicked in a rendered message. Path is workspace-relative (or
   // absolute); the host resolves + reveals the line, and silently no-ops if it doesn't exist.
   | { type: "openFile"; path: string; line?: number; col?: number }

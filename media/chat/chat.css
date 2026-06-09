@@ -1488,6 +1488,171 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
 .connection-banner .cb-retry:hover { background: color-mix(in srgb, currentColor 16%, transparent); }
 @keyframes cb-spin { to { transform: rotate(360deg); } }
 
+.model-item.model-add.secondary .model-title { color: var(--muted); }
+
+/* Pi extension UI requests rendered inside the webview. */
+.extension-ui-root {
+  position: absolute;
+  inset: 0;
+  z-index: 80;
+  pointer-events: none;
+}
+.extension-ui-stack {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 108px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: auto;
+}
+.extension-ui-status-line,
+.extension-ui-widget {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--accent) 6%);
+  color: var(--fg);
+  font-size: var(--fs-meta);
+  line-height: 1.45;
+  box-shadow: 0 10px 28px var(--shadow);
+}
+.extension-ui-widget-line {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.extension-ui-link {
+  margin-top: 7px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 700;
+}
+.extension-ui-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  pointer-events: auto;
+}
+.extension-ui-panel {
+  width: min(420px, 100%);
+  max-height: min(80vh, 520px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 20px 60px var(--shadow);
+}
+.extension-ui-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.extension-ui-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--fg);
+  font-size: var(--fs-body);
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.extension-ui-close {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.extension-ui-close:hover { background: var(--surface-hover); color: var(--fg); }
+.extension-ui-message {
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.extension-ui-options {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.extension-ui-option {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.extension-ui-option:hover,
+.extension-ui-option:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--surface-hover);
+}
+.extension-ui-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.extension-ui-field {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: var(--fs-body);
+}
+.extension-ui-field:focus {
+  border-color: color-mix(in srgb, var(--focus) 55%, var(--border));
+}
+.extension-ui-textarea {
+  min-height: 132px;
+  max-height: 42vh;
+  resize: vertical;
+}
+.extension-ui-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.extension-ui-primary,
+.extension-ui-secondary {
+  min-width: 70px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-weight: 700;
+}
+.extension-ui-primary {
+  background: var(--accent);
+  color: var(--bg);
+}
+.extension-ui-secondary {
+  border: 1px solid var(--border);
+  color: var(--fg);
+}
+.extension-ui-secondary:hover { background: var(--surface-hover); }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
