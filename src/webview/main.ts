@@ -14,21 +14,14 @@ import { closeHistory, toggleHistory, renderSessionList, initHistory } from "./h
 import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker, setAuthAvailable } from "./modelPicker";
 import { acceptActive, closeCommandMenu, initCommandMenu, invalidateCommands, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
 import { initContextChip, resetContextInclude, updateEditorContext } from "./contextChip";
+import { initThinkingControl, supportedThinkingLevels } from "./thinkingControl";
 import { ensureAnimating } from "./animator";
 import { piMarkHtml } from "./piMark";
 import { post } from "./bridge";
 import { updateConnectionBanner } from "./connectionBanner";
 import { initScrollControls, resetScrollFollowing } from "./scroll";
-import { appEl, titleEl, sendEl, stopEl, historyBtnEl, newSessionEl, thinkingControlEl, modelEl, inputEl, composerEl, messagesEl } from "./dom";
+import { appEl, titleEl, sendEl, stopEl, historyBtnEl, newSessionEl, modelEl, inputEl, composerEl, messagesEl } from "./dom";
 import type { ExtensionToWebviewMessage } from "../protocol";
-
-const THINKING_LEVEL_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
-
-function supportedThinkingLevels(model: any): string[] {
-  if (!model || model.reasoning !== true) return [];
-  const map = model.thinkingLevelMap && typeof model.thinkingLevelMap === "object" ? model.thinkingLevelMap as Record<string, unknown> : undefined;
-  return THINKING_LEVEL_ORDER.filter((level) => !map || !Object.prototype.hasOwnProperty.call(map, level) || map[level] !== null);
-}
 
 // pi "boot" splash: the pi.dev block logo tetris-assembles, then fades to the chat.
 // Shown once per fresh webview load (skipped when a conversation is already present).
@@ -65,13 +58,6 @@ stopEl.addEventListener("click", () => {
 });
 historyBtnEl.addEventListener("click", toggleHistory);
 modelEl.addEventListener("click", toggleModelPicker);
-thinkingControlEl.addEventListener("click", (event) => {
-  const target = event.target as HTMLElement | null;
-  const button = target && target.closest ? (target.closest('[data-action="set-thinking-level"]') as HTMLButtonElement | null) : null;
-  const level = button?.dataset.level;
-  if (!level) return;
-  post({ type: "setThinkingLevel", level });
-});
 newSessionEl.addEventListener("click", () => {
   closeHistory();
   closeModelPicker();
@@ -332,6 +318,7 @@ window.addEventListener("message", (event) => {
 initHistory();
 initModelPicker();
 initCommandMenu();
+initThinkingControl();
 initContextChip();
 initImageAttachments(() => {
   autoResizeInput();

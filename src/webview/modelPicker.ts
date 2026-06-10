@@ -15,6 +15,7 @@ export function isModelPickerOpen(): boolean {
 export function openModelPicker(): void {
   appEl.classList.remove("history-open");
   appEl.classList.remove("command-open");
+  appEl.classList.remove("thinking-open");
   appEl.classList.add("model-open");
   modelSearchEl.value = "";
   if (allModels.length > 0) {

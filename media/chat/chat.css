@@ -1474,35 +1474,39 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
   letter-spacing: .01em;
   white-space: nowrap;
 }
-.thinking-steps {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+.thinking-control svg { color: var(--thinking-current-color); flex: none; }
+.thinking-control .chip-caret { color: var(--muted); font-size: var(--fs-micro); }
+/* Thinking-level popover, anchored above the composer (command-panel pattern). */
+.thinking-panel {
+  position: absolute;
+  bottom: 96px;
+  right: 16px;
+  width: min(300px, calc(100% - 32px));
+  display: none;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 10px 26px var(--shadow);
+  overflow: hidden;
+  z-index: 30;
 }
-.thinking-step {
-  width: 7px;
-  height: 14px;
-  padding: 0;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--muted) 24%, transparent);
-  opacity: .58;
-  transition: background-color 120ms ease, opacity 120ms ease, transform 120ms ease;
+.app.thinking-open .thinking-panel { display: flex; }
+.thinking-list { display: flex; flex-direction: column; padding: 5px; }
+.thinking-option {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
 }
-.thinking-step:hover {
-  opacity: .9;
-  transform: scaleY(1.08);
-}
-.thinking-step:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 55%, transparent);
-}
-.thinking-step.filled {
-  background: var(--thinking-current-color);
-  opacity: 1;
-}
-.thinking-step.current {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--thinking-current-color) 45%, transparent);
-}
+.thinking-option:hover { background: var(--surface-hover); }
+.thinking-option.current { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.thinking-option.unsupported { opacity: .45; cursor: default; }
+.thinking-option.unsupported:hover { background: none; }
+.thinking-option-name { flex: none; min-width: 56px; color: var(--fg); font-weight: 600; font-size: var(--fs-meta); }
+.thinking-option-desc { color: var(--muted); font-size: var(--fs-micro); }
 .stop-button {
   height: 30px;
   padding: 0 11px;

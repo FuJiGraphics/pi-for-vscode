@@ -56,6 +56,7 @@ export function isCommandMenuOpen(): boolean {
 export function openCommandMenu(): void {
   appEl.classList.remove("history-open");
   appEl.classList.remove("model-open");
+  appEl.classList.remove("thinking-open");
   appEl.classList.add("command-open");
   activeIndex = 0;
   if (!loaded) post({ type: "requestCommands" }); // built-ins show immediately; Pi commands fill in

@@ -10,7 +10,8 @@
 // This split is what keeps hover/toggle stable: the activity DOM is never rebuilt
 // at 60fps, so :hover state and click targets survive.
 import { state, save, isRenderSuppressed } from "./state";
-import { messagesEl, titleEl, thinkingControlEl, modelEl, stopEl, composerEl, sendEl, inputEl } from "./dom";
+import { messagesEl, titleEl, modelEl, stopEl, composerEl, sendEl, inputEl } from "./dom";
+import { renderThinkingControl } from "./thinkingControl";
 import { escapeHtml, formatTime, formatDuration, roleLabel } from "./util";
 import { renderMarkdown } from "./markdown";
 import { tokCost } from "./cards";
@@ -71,57 +72,6 @@ function isStreaming(message: UiMessage): boolean {
     typeof message.revealed === "number" &&
     message.revealed < message.text.length
   );
-}
-
-const THINKING_LEVEL_LABELS: Record<string, string> = {
-  off: "off",
-  minimal: "minimal",
-  low: "low",
-  medium: "medium",
-  high: "high",
-  xhigh: "xhigh",
-};
-
-function renderThinkingControl(): void {
-  const levels = state.thinkingLevels;
-  if (levels.length <= 1) {
-    thinkingControlEl.hidden = true;
-    thinkingControlEl.innerHTML = "";
-    thinkingControlEl.removeAttribute("data-current-level");
-    thinkingControlEl.removeAttribute("title");
-    return;
-  }
-
-  const currentIndex = Math.max(0, levels.indexOf(state.thinkingLevel));
-  const currentLevel = levels[currentIndex] || levels[0];
-  const currentLabel = THINKING_LEVEL_LABELS[currentLevel] || currentLevel;
-  thinkingControlEl.hidden = false;
-  thinkingControlEl.dataset.currentLevel = currentLevel;
-  thinkingControlEl.title = `Thinking level: ${currentLabel}`;
-  thinkingControlEl.setAttribute("aria-label", `Thinking level: ${currentLabel}`);
-  thinkingControlEl.innerHTML =
-    '<span class="thinking-label">' +
-    escapeHtml(currentLabel) +
-    '</span><div class="thinking-steps" role="group" aria-label="Thinking levels">' +
-    levels
-      .map((level, index) => {
-        const filled = index <= currentIndex ? " filled" : "";
-        const current = level === currentLevel ? " current" : "";
-        return (
-          '<button class="thinking-step' +
-          filled +
-          current +
-          '" data-action="set-thinking-level" data-level="' +
-          escapeHtml(level) +
-          '" title="' +
-          escapeHtml(`Set thinking level to ${THINKING_LEVEL_LABELS[level] || level}`) +
-          '" aria-label="' +
-          escapeHtml(`Set thinking level to ${THINKING_LEVEL_LABELS[level] || level}`) +
-          '"></button>'
-        );
-      })
-      .join("") +
-    "</div>";
 }
 
 // ---- assistant status line (spinner / working / done), single coherent line ----

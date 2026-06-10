@@ -55,6 +55,9 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
     <section id="command-panel" class="command-panel" aria-label="Slash commands">
       <div id="command-list" class="command-list" role="listbox"></div>
     </section>
+    <section id="thinking-panel" class="thinking-panel" aria-label="Thinking level">
+      <div id="thinking-list" class="thinking-list" role="menu"></div>
+    </section>
     <div id="extension-ui-root" class="extension-ui-root" aria-live="polite"></div>
     <footer class="composer-wrap">
       <div id="composer" class="composer">
@@ -67,7 +70,7 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
           <button class="pill-button" title="Approval mode" aria-label="Approval mode">✋ <span class="optional">Ask for approval</span>⌄</button>
           <button id="stop" class="stop-button" disabled hidden>Stop</button>
           <span class="spacer"></span>
-          <div id="thinkingControl" class="thinking-control" hidden aria-label="Thinking level"></div>
+          <button id="thinkingControl" class="thinking-control" hidden aria-label="Thinking level" aria-haspopup="menu"></button>
           <button id="model" class="model-button" title="Model" aria-label="Model">Pi⌄</button>
           <button id="send" class="send-button empty" title="Send" aria-label="Send">↑</button>
         </div>
