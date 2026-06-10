@@ -67,10 +67,8 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
     <div id="extension-ui-root" class="extension-ui-root" aria-live="polite"></div>
     <div id="onboarding-root" class="onboarding-root" hidden></div>
     <footer class="composer-wrap">
-      <div id="sessionStats" class="session-stats" hidden></div>
       <div id="composer" class="composer">
         <div id="attachmentTray" class="attachment-tray" hidden></div>
-        <button id="contextChip" class="context-chip" type="button" hidden></button>
         <textarea id="input" placeholder="Ask Pi to work in this project"></textarea>
         <input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden />
         <div class="composer-actions">
@@ -82,6 +80,11 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
           <button id="model" class="model-button" title="Model" aria-label="Model">Pi⌄</button>
           <button id="send" class="send-button empty" title="Send" aria-label="Send">↑</button>
         </div>
+      </div>
+      <div class="status-strip">
+        <button id="contextChip" class="context-chip" type="button" hidden></button>
+        <span class="strip-spacer"></span>
+        <div id="sessionStats" class="session-stats" tabindex="0" hidden></div>
       </div>
     </footer>
   </div>

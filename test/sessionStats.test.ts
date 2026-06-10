@@ -4,7 +4,7 @@ import { SessionStatsService, sessionStatsFromRpc } from "../src/sessionStatsSer
 // Stubs MUST come before any webview module (sessionStatsBar's import chain reaches dom.ts).
 import "./_bridgeStub";
 import "./_domStub";
-import { contextLabel, statsSummary } from "../src/webview/sessionStatsBar";
+import { contextLabel, statsPopoverHtml, statsSummary } from "../src/webview/sessionStatsBar";
 
 const V078_PAYLOAD = {
   sessionFile: "/x/s.jsonl",
@@ -58,6 +58,28 @@ test("SessionStatsService posts tagged stats; RPC failure posts nothing", async 
 
   await new SessionStatsService(presenter).postStats(undefined);
   assert.equal(posts.length, 1);
+});
+
+test("statsPopoverHtml: context bar, token split, Est. cost label, and usage-remaining rows", () => {
+  const stats = sessionStatsFromRpc(V078_PAYLOAD)!;
+  const html = statsPopoverHtml(stats, [{ label: "5h limit", value: "1% used · resets 11:24 PM" }]);
+  assert.ok(html.includes(">Context<"));
+  assert.ok(html.includes("78k of 200k tokens")); // formatTokens drops decimals ≥10k
+  assert.ok(html.includes("61% left"));
+  assert.ok(html.includes('style="width:39%"')); // mini bar
+  assert.ok(html.includes(">Session<"));
+  assert.ok(html.includes("Cache read"));
+  assert.ok(html.includes("Est. API cost")); // honest label — pi converts via price table
+  assert.ok(html.includes(">Usage remaining<"));
+  assert.ok(html.includes("5h limit"));
+
+  // No usage data → section omitted entirely.
+  const noUsage = statsPopoverHtml(stats, []);
+  assert.equal(noUsage.includes("Usage remaining"), false);
+  // Post-compaction (percent null) → no Context section, Session still renders.
+  const postCompaction = statsPopoverHtml({ ...stats, context: { tokens: null, contextWindow: 200_000, percent: null } }, []);
+  assert.equal(postCompaction.includes(">Context<"), false);
+  assert.ok(postCompaction.includes(">Session<"));
 });
 
 test("statsSummary and contextLabel format Claude-style", () => {

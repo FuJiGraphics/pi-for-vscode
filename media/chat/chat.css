@@ -1456,26 +1456,88 @@ a:hover { text-decoration: underline; }
 }
 /* "N queued" pill above the composer: rapid-fire sends accepted and waiting their turn. The dot
    reuses .activity-working-dot's pulse so it reads as live, not a static badge. */
-/* Session usage strip above the composer: tokens · cost left, context bar right. */
-.session-stats {
+/* Bottom status strip (Codex-style): file-reference chip left, usage cluster right. */
+.status-strip {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: 8px;
-  padding: 0 10px 5px;
+  min-height: 20px;
+  padding: 4px 10px 0;
   font-size: var(--fs-micro);
   color: var(--muted);
 }
-.stats-context { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.ctx-bar {
-  width: 56px;
+.status-strip .context-chip { margin: 0; max-width: 60%; }
+.strip-spacer { flex: 1 1 auto; }
+.session-stats {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  cursor: default;
+  outline: none;
+}
+.session-stats:hover .stats-summary, .session-stats:focus .stats-summary { color: var(--fg); }
+/* Circular context gauge: conic fill set inline; the ::after punches the donut hole. */
+.ctx-gauge {
+  position: relative;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  flex: none;
+}
+.ctx-gauge::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--bg);
+}
+.ctx-pct { font-variant-numeric: tabular-nums; }
+/* Rich hover popover (pure CSS — :hover / keyboard :focus on the cluster). */
+.stats-popover {
+  display: none;
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 250px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 14px 36px var(--shadow);
+  z-index: 40;
+  white-space: normal;
+  cursor: auto;
+}
+.session-stats:hover .stats-popover, .session-stats:focus .stats-popover { display: block; }
+.sp-title {
+  margin: 8px 0 3px;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.sp-title:first-child { margin-top: 0; }
+.sp-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 1.5px 0;
+  font-size: var(--fs-meta);
+  color: var(--subtle);
+}
+.sp-row span:first-child { color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sp-row span:last-child { flex: none; font-variant-numeric: tabular-nums; }
+.sp-bar {
   height: 4px;
+  margin: 4px 0 2px;
   border-radius: 999px;
   overflow: hidden;
   background: color-mix(in srgb, var(--fg) 12%, transparent);
 }
-.ctx-fill { height: 100%; border-radius: 999px; background: var(--accent); }
-.stats-context.high .ctx-fill { background: var(--error); }
+.sp-bar span { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
 
 /* Mid-run sends waiting in pi's steer/follow-up queue: dimmed until pi consumes them. */
 .message.user.pending .bubble { opacity: .62; }
