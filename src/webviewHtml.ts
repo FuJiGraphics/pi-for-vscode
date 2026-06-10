@@ -60,6 +60,7 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
       <div id="queue-indicator" class="queue-indicator" role="status" aria-live="polite" hidden></div>
       <div id="composer" class="composer">
         <div id="attachmentTray" class="attachment-tray" hidden></div>
+        <button id="contextChip" class="context-chip" type="button" hidden></button>
         <textarea id="input" placeholder="Ask Pi to work in this project"></textarea>
         <input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden />
         <div class="composer-actions">

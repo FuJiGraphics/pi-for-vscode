@@ -20,6 +20,7 @@ export const jumpLatestEl = byId<HTMLButtonElement>("jumpLatest");
 export const connectionBannerEl = byId<HTMLElement>("connection-banner");
 export const inputEl = byId<HTMLTextAreaElement>("input");
 export const attachmentTrayEl = byId<HTMLElement>("attachmentTray");
+export const contextChipEl = byId<HTMLButtonElement>("contextChip");
 export const imageInputEl = byId<HTMLInputElement>("imageInput");
 export const attachImageEl = byId<HTMLButtonElement>("attachImage");
 export const sendEl = byId<HTMLButtonElement>("send");

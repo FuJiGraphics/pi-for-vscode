@@ -7,6 +7,7 @@ import { refreshSendButton } from "./render";
 import { post } from "./bridge";
 import { resetScrollFollowing } from "./scroll";
 import { consumePendingImageAttachments, getPendingImageAttachments, hasPendingImageAttachments } from "./attachments";
+import { contextReference } from "./contextChip";
 
 let submitLockedUntil = 0;
 
@@ -46,7 +47,11 @@ export function clearComposer(): void {
 
 export function submitInput(): void {
   const raw = inputEl.value;
-  const text = raw.trim();
+  const typed = raw.trim();
+  // The context chip (when lit) appends the active file reference. Shown in the user
+  // bubble too — what was sent is what the user sees (and the path renders clickable).
+  const reference = typed ? contextReference() : "";
+  const text = reference ? typed + "\n\n(Context: @" + reference + ")" : typed;
   const pendingImages = getPendingImageAttachments();
   const hasImages = pendingImages.length > 0;
   if (!text && !hasImages) return;

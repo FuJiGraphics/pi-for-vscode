@@ -12,6 +12,7 @@ import { initImageAttachments } from "./attachments";
 import { closeHistory, toggleHistory, renderSessionList, initHistory } from "./history";
 import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker, setAuthAvailable } from "./modelPicker";
 import { acceptActive, closeCommandMenu, initCommandMenu, invalidateCommands, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
+import { initContextChip, updateEditorContext } from "./contextChip";
 import { ensureAnimating } from "./animator";
 import { piMarkHtml } from "./piMark";
 import { post } from "./bridge";
@@ -315,6 +316,7 @@ const inbound: InboundTable = {
   },
   modelList: (m) => renderModelList(m.models),
   theme: (m) => setTheme(m.theme, m.kind),
+  editorContext: (m) => updateEditorContext({ path: m.path, startLine: m.startLine, endLine: m.endLine }),
 };
 
 window.addEventListener("message", (event) => {
@@ -327,6 +329,7 @@ window.addEventListener("message", (event) => {
 initHistory();
 initModelPicker();
 initCommandMenu();
+initContextChip();
 initImageAttachments(() => {
   autoResizeInput();
   updateInputState();

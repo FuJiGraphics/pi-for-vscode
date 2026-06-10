@@ -1320,6 +1320,37 @@ a:hover { text-decoration: underline; }
 .attachment-tray {
   padding: 0 0 8px;
 }
+/* Active-editor context chip above the textarea: dim by default, accent-lit when the
+   reference is attached to the next prompt (click toggles). */
+.context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin: 0 0 6px;
+  padding: 3px 9px;
+  border: 1px dashed var(--border);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--subtle);
+  font-size: var(--fs-meta);
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+}
+.context-chip:hover { color: var(--fg); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.context-chip.on {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--fg);
+}
+.context-chip .context-chip-mark { color: var(--accent); font-weight: 700; }
+.context-chip .context-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
 textarea {
   width: 100%;
   min-height: 42px;

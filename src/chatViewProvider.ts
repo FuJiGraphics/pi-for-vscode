@@ -9,6 +9,7 @@ import { SessionRuntimeManager } from "./sessionRuntimeManager";
 import { SessionCrudService } from "./sessionCrudService";
 import type { ImageAttachment, PiRpcMessage, WebviewToExtensionMessage } from "./protocol";
 import { getChatHtml } from "./webviewHtml";
+import { EditorContextTracker } from "./editorContextTracker";
 import { samePath } from "./workspace";
 import { readSessionFile } from "./stateHelpers";
 import { resolveActiveTheme } from "./themeResolver";
@@ -26,6 +27,7 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
   private readonly models: ModelService;
   private readonly commandPalette: CommandPaletteService;
   private readonly crud: SessionCrudService;
+  private contextTracker?: EditorContextTracker;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.bundled = new BundledExtensionResolver(context);
@@ -62,6 +64,10 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
       // Keep the webview's Shiki highlighter in step with the editor's color theme.
       vscode.window.onDidChangeActiveColorTheme(() => this.postTheme()),
     );
+    // Mirrors the active editor (file + selection) to the composer's context chip.
+    // disposeListeners() above disposed the previous tracker on a re-resolve.
+    this.contextTracker = new EditorContextTracker(this.presenter);
+    this.presenter.pushDisposable(this.contextTracker);
 
     void this.manager.postState();
   }
@@ -121,6 +127,7 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
       switch (message.type) {
         case "ready": {
           this.postTheme();
+          this.contextTracker?.post();
           const rt = await this.manager.ensureActiveRuntime();
           const webviewSessionFile = message.sessionFile;
           // Resume the session the user was last viewing (Claude-style resume-from-disk):

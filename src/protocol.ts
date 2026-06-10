@@ -232,4 +232,8 @@ export type ExtensionToWebviewMessage =
   // always selects a bundled fallback theme. Re-sent on theme change.
   | { type: "theme"; theme?: unknown; kind: "light" | "dark" | "highContrast" | "highContrastLight" }
   // Drives the slim connection banner under the header. "connected" auto-hides.
-  | { type: "connection"; status: "reconnecting" | "connected" | "disconnected" };
+  | { type: "connection"; status: "reconnecting" | "connected" | "disconnected" }
+  // The active editor's file (and selected line range) for the composer's context chip.
+  // A pathless post hides the chip (untitled / outside the workspace / no editor).
+  // 1-based inclusive lines. Carries a REFERENCE only — file content never crosses here.
+  | { type: "editorContext"; path?: string; startLine?: number; endLine?: number };
