@@ -163,6 +163,32 @@ function extractTarball(tarball: string, dest: string): Promise<void> {
   });
 }
 
+// One `--version` probe per pi entry per window (the promise is cached, so concurrent
+// runtimes share a single child process). The bundled pi skips the probe entirely.
+const piVersionCache = new Map<string, Promise<string | undefined>>();
+
+/** Detect the version of a non-bundled pi via `pi --version`; undefined on any failure. */
+export function detectPiVersion(runtime: PiRuntime): Promise<string | undefined> {
+  if (runtime.source === "bundled") return Promise.resolve(PINNED_PI_VERSION);
+  const cached = piVersionCache.get(runtime.piEntry);
+  if (cached) return cached;
+  const command = runtime.launchKind === "node-script" ? runtime.nodePath ?? "node" : runtime.piEntry;
+  const args = runtime.launchKind === "node-script" ? [runtime.piEntry, "--version"] : ["--version"];
+  const env = runtime.runAsNode ? { ...process.env, ELECTRON_RUN_AS_NODE: "1" } : process.env;
+  const probe = new Promise<string | undefined>((resolve) => {
+    execFile(command, args, { timeout: 5000, env }, (error, stdout) => {
+      if (error) {
+        resolve(undefined);
+        return;
+      }
+      const match = /\d+\.\d+\.\d+/.exec(String(stdout));
+      resolve(match ? match[0] : undefined);
+    });
+  });
+  piVersionCache.set(runtime.piEntry, probe);
+  return probe;
+}
+
 function getNodeVersion(nodePath: string): Promise<string | undefined> {
   return new Promise((resolve) => {
     execFile(nodePath, ["--version"], { timeout: 5000 }, (error, stdout) => {

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
 import { PiRpcClient } from "./piRpcClient";
-import { NodeTooOldError, PiNotInstalledError, resolvePiRuntime } from "./piResolver";
+import { NodeTooOldError, PiNotInstalledError, PINNED_PI_VERSION, detectPiVersion, resolvePiRuntime, type PiRuntime } from "./piResolver";
 import type { SessionListItem } from "./protocol";
 import { isPiSessionInWorkspace, listPiSessions, readPiSessionCwd, type PiSessionSummary } from "./sessionStore";
 import { asRecord, toSessionListItem } from "./sessionFormat";
@@ -208,6 +208,7 @@ export class SessionRuntimeManager {
       this.reportRuntimeError(error);
       return false;
     }
+    void this.warnOnVersionMismatch(runtime);
     const config = this.getConfiguration();
     const bundledArgs = await this.bundled.computeArgs(runtime, rt.cwd);
     const client = new PiRpcClient({
@@ -242,6 +243,24 @@ export class SessionRuntimeManager {
   async reviveRuntime(rt: SessionRuntime): Promise<boolean> {
     if (rt.client?.isStarted) return true;
     return this.createClientForRuntime(rt);
+  }
+
+  // A system/configured pi may be any version; warn ONCE per window when its major.minor
+  // differs from the pinned, tested one. Advisory only — the launch is never blocked
+  // (user-installed pi keeps precedence by design).
+  private versionWarned = false;
+  private async warnOnVersionMismatch(runtime: PiRuntime): Promise<void> {
+    if (this.versionWarned || runtime.source === "bundled") return;
+    const version = await detectPiVersion(runtime);
+    if (!version || this.versionWarned) return;
+    const [major, minor] = version.split(".");
+    const [pinnedMajor, pinnedMinor] = PINNED_PI_VERSION.split(".");
+    if (major === pinnedMajor && minor === pinnedMinor) return;
+    this.versionWarned = true;
+    this.presenter.postSystem(
+      `Pi ${version} detected; this extension is tested against ${PINNED_PI_VERSION}. ` +
+        `If something looks off, set pi-for-vscode.useBundledPi to "always".`,
+    );
   }
 
   // Switching away: a still-running background session stays connected so we observe its

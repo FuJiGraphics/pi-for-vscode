@@ -223,7 +223,10 @@ export type ExtensionToWebviewMessage =
   | { type: "dropSession"; sessionId: string }
   | { type: "sessionList"; sessions: SessionListItem[] }
   | { type: "modelList"; models: ModelListItem[] }
-  | { type: "commandList"; commands: CommandListItem[] }
+  // `authAvailable` reflects whether the bundled auth bridge registered its login command in
+  // this pi runtime (derived from get_commands). Omitted when unknown (e.g. RPC failure) —
+  // the webview then keeps the optimistic default.
+  | { type: "commandList"; commands: CommandListItem[]; authAvailable?: boolean }
   // The active VS Code editor theme, so the webview's Shiki highlighter tracks the editor. `theme`
   // is the resolved VS Code theme JSON (tokenColors etc.) when the host could read it; `kind`
   // always selects a bundled fallback theme. Re-sent on theme change.

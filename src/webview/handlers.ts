@@ -40,6 +40,21 @@ function formatTurnError(raw: unknown): string {
 
 const TRANSIENT_DISCONNECT_RE = /idle timeout|websocket|connection|disconnect|econnreset|timed out/i;
 
+// Forward-compat diagnostics: unknown event/delta types stay silently ignored (tolerant
+// reader — see protocol.ts), but are logged ONCE per type so a pi schema change degrades
+// visibly in webview devtools instead of as an unexplainable quiet UX regression.
+const warnedUnknownTypes = new Set<string>();
+function warnUnknownOnce(kind: string, type: unknown): void {
+  const key = kind + ":" + String(type);
+  if (warnedUnknownTypes.has(key)) return;
+  warnedUnknownTypes.add(key);
+  console.warn("[pi-for-vscode] unhandled " + kind + " type:", type);
+}
+
+// message_update delta types we receive but intentionally don't render: text bracket events
+// carry no payload we need, and toolcall_* info arrives via the richer tool_execution_* events.
+const IGNORED_DELTA_TYPES = new Set(["text_start", "text_end", "toolcall_start", "toolcall_delta", "toolcall_end"]);
+
 export function handleRpcEvent(event: any): void {
   switch (event.type) {
     case "agent_start":
@@ -58,12 +73,14 @@ export function handleRpcEvent(event: any): void {
       if (!state.running) break;
       const delta = event.assistantMessageEvent;
       if (!delta) break;
-      if (delta.type === "text_delta" && delta.delta) {
-        appendAssistant(delta.delta);
+      if (delta.type === "text_delta") {
+        if (delta.delta) appendAssistant(delta.delta);
       } else if (delta.type === "thinking_start" || delta.type === "thinking_delta" || delta.type === "thinking_end") {
         applyThinkingEvent(ensureActivity(), delta);
         ensureAnimating();
         scheduleRender();
+      } else if (delta.type && !IGNORED_DELTA_TYPES.has(String(delta.type))) {
+        warnUnknownOnce("message_update delta", delta.type);
       }
       break;
     }
@@ -143,8 +160,16 @@ export function handleRpcEvent(event: any): void {
       break;
     case "session_info_changed":
       break;
+    // Handled host-side (rpcEventRouter posts state / routes the UI request); the raw
+    // rpcEvent copy that still reaches us is intentionally ignored.
+    case "thinking_level_changed":
+    case "extension_ui_request":
+      break;
     case "extension_error":
       addMessage("system", "Extension error: " + (event.error || "unknown"), { error: true });
+      break;
+    default:
+      warnUnknownOnce("rpc event", event.type);
       break;
   }
 }

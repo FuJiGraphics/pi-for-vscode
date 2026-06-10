@@ -35,6 +35,18 @@ export function toggleModelPicker(): void {
   else openModelPicker();
 }
 
+// Whether the pi runtime has the auth bridge's /login command (from commandList).
+// Optimistic default: until told otherwise, offer the buttons — the bridge's own
+// fallback notice is the second line of defense if they race ahead of the signal.
+let authAvailable = true;
+
+export function setAuthAvailable(value: boolean | undefined): void {
+  const next = value !== false;
+  if (next === authAvailable) return;
+  authAvailable = next;
+  if (isModelPickerOpen()) applyFilter();
+}
+
 const AUTH_ACTIONS_HTML =
   '<button class="model-item model-add" data-action="login"><div class="model-main">' +
   '<div class="model-title">Sign in or add provider key</div>' +
@@ -42,6 +54,15 @@ const AUTH_ACTIONS_HTML =
   '<button class="model-item model-add secondary" data-action="logout"><div class="model-main">' +
   '<div class="model-title">Sign out provider</div>' +
   '<div class="model-meta">Removes credentials from Pi</div></div></button>';
+
+// Shown when the auth bridge did not load in this pi runtime: point at pi's own flow
+// instead of rendering buttons that can only dead-end.
+const AUTH_FALLBACK_HTML =
+  '<div class="model-empty">Sign-in is unavailable in this Pi runtime - run <code>pi</code> in a terminal and use <code>/login</code>.</div>';
+
+function authActionsHtml(): string {
+  return authAvailable ? AUTH_ACTIONS_HTML : AUTH_FALLBACK_HTML;
+}
 
 function itemHtml(model: ModelListItem): string {
   return (
@@ -71,10 +92,10 @@ function applyFilter(): void {
       '<div class="model-empty">' +
       (allModels.length === 0 ? "No models available. Sign in or add a provider key below." : "No models match your search.") +
       "</div>" +
-      AUTH_ACTIONS_HTML;
+      authActionsHtml();
     return;
   }
-  modelListEl.innerHTML = filtered.map(itemHtml).join("") + AUTH_ACTIONS_HTML;
+  modelListEl.innerHTML = filtered.map(itemHtml).join("") + authActionsHtml();
 }
 
 export function renderModelList(models: ModelListItem[]): void {

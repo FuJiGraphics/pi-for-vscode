@@ -10,7 +10,7 @@ import { initWakeDetection } from "./wake";
 import { submitInput, autoResizeInput, updateInputState, composerIsEmpty } from "./input";
 import { initImageAttachments } from "./attachments";
 import { closeHistory, toggleHistory, renderSessionList, initHistory } from "./history";
-import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker } from "./modelPicker";
+import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker, setAuthAvailable } from "./modelPicker";
 import { acceptActive, closeCommandMenu, initCommandMenu, invalidateCommands, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
 import { ensureAnimating } from "./animator";
 import { piMarkHtml } from "./piMark";
@@ -309,7 +309,10 @@ const inbound: InboundTable = {
   stderr: (m) => handleStderr(m.text || ""),
   connection: (m) => updateConnectionBanner(m.status),
   sessionList: (m) => renderSessionList(m.sessions),
-  commandList: (m) => renderCommandList(m.commands),
+  commandList: (m) => {
+    renderCommandList(m.commands);
+    setAuthAvailable(m.authAvailable);
+  },
   modelList: (m) => renderModelList(m.models),
   theme: (m) => setTheme(m.theme, m.kind),
 };

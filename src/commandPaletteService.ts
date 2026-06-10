@@ -44,6 +44,10 @@ export class CommandPaletteService {
         sourceTag: buildSourceTag(sourceInfo),
       });
     }
-    this.presenter.post({ type: "commandList", commands });
+    // The auth bridge (vscode-auth-bridge.ts) registers /login — its absence from a
+    // SUCCESSFUL command list means the bridge failed to load in this pi runtime, so the
+    // model picker degrades its sign-in buttons instead of offering a dead end.
+    const authAvailable = commands.some((command) => command.name === "login");
+    this.presenter.post({ type: "commandList", commands, authAvailable });
   }
 }
