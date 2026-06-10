@@ -11,9 +11,10 @@ import { initWakeDetection } from "./wake";
 import { submitInput, autoResizeInput, updateInputState, composerIsEmpty } from "./input";
 import { initImageAttachments } from "./attachments";
 import { closeHistory, toggleHistory, renderSessionList, initHistory } from "./history";
-import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker, setAuthAvailable } from "./modelPicker";
-import { setAboutInfo, setAuthState, setAuthAvailable as setBridgeAuthAvailable } from "./authState";
+import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker } from "./modelPicker";
+import { setAboutInfo, setAuthState, setAuthAvailable } from "./authState";
 import { initOnboarding, onboardingConnectionChange } from "./onboarding";
+import { closeSettings, initSettings } from "./settingsPanel";
 import { acceptActive, closeCommandMenu, initCommandMenu, invalidateCommands, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
 import { initContextChip, resetContextInclude, updateEditorContext } from "./contextChip";
 import { initThinkingControl, supportedThinkingLevels } from "./thinkingControl";
@@ -64,6 +65,7 @@ newSessionEl.addEventListener("click", () => {
   closeHistory();
   closeModelPicker();
   closeCommandMenu();
+  closeSettings();
   post({ type: "newSession" });
 });
 function placeCaretAtEnd(element: HTMLElement): void {
@@ -311,7 +313,6 @@ const inbound: InboundTable = {
   commandList: (m) => {
     renderCommandList(m.commands);
     setAuthAvailable(m.authAvailable);
-    setBridgeAuthAvailable(m.authAvailable);
   },
   authState: (m) => setAuthState(m.status, m.providers),
   about: (m) => setAboutInfo({ extensionVersion: m.extensionVersion, piVersion: m.piVersion, piSource: m.piSource }),
@@ -337,6 +338,7 @@ initCommandMenu();
 initThinkingControl();
 initContextChip();
 initOnboarding();
+initSettings();
 initImageAttachments(() => {
   autoResizeInput();
   updateInputState();

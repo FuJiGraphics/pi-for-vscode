@@ -16,6 +16,7 @@ export function openModelPicker(): void {
   appEl.classList.remove("history-open");
   appEl.classList.remove("command-open");
   appEl.classList.remove("thinking-open");
+  appEl.classList.remove("settings-open");
   appEl.classList.add("model-open");
   modelSearchEl.value = "";
   if (allModels.length > 0) {
@@ -34,35 +35,6 @@ export function closeModelPicker(): void {
 export function toggleModelPicker(): void {
   if (isModelPickerOpen()) closeModelPicker();
   else openModelPicker();
-}
-
-// Whether the pi runtime has the auth bridge's /login command (from commandList).
-// Optimistic default: until told otherwise, offer the buttons — the bridge's own
-// fallback notice is the second line of defense if they race ahead of the signal.
-let authAvailable = true;
-
-export function setAuthAvailable(value: boolean | undefined): void {
-  const next = value !== false;
-  if (next === authAvailable) return;
-  authAvailable = next;
-  if (isModelPickerOpen()) applyFilter();
-}
-
-const AUTH_ACTIONS_HTML =
-  '<button class="model-item model-add" data-action="login"><div class="model-main">' +
-  '<div class="model-title">Sign in or add provider key</div>' +
-  '<div class="model-meta">Uses Pi authentication</div></div></button>' +
-  '<button class="model-item model-add secondary" data-action="logout"><div class="model-main">' +
-  '<div class="model-title">Sign out provider</div>' +
-  '<div class="model-meta">Removes credentials from Pi</div></div></button>';
-
-// Shown when the auth bridge did not load in this pi runtime: point at pi's own flow
-// instead of rendering buttons that can only dead-end.
-const AUTH_FALLBACK_HTML =
-  '<div class="model-empty">Sign-in is unavailable in this Pi runtime - run <code>pi</code> in a terminal and use <code>/login</code>.</div>';
-
-function authActionsHtml(): string {
-  return authAvailable ? AUTH_ACTIONS_HTML : AUTH_FALLBACK_HTML;
 }
 
 // "$3" / "$0.33" — max 2 decimals, trailing zeros trimmed.
@@ -127,12 +99,11 @@ function applyFilter(): void {
   if (filtered.length === 0) {
     modelListEl.innerHTML =
       '<div class="model-empty">' +
-      (allModels.length === 0 ? "No models available. Sign in or add a provider key below." : "No models match your search.") +
-      "</div>" +
-      authActionsHtml();
+      (allModels.length === 0 ? "No models available. Sign in from Settings." : "No models match your search.") +
+      "</div>";
     return;
   }
-  modelListEl.innerHTML = filtered.map(itemHtml).join("") + authActionsHtml();
+  modelListEl.innerHTML = filtered.map(itemHtml).join("");
 }
 
 export function renderModelList(models: ModelListItem[]): void {
@@ -142,15 +113,6 @@ export function renderModelList(models: ModelListItem[]): void {
 
 function handleListClick(event: MouseEvent): void {
   const target = event.target as HTMLElement | null;
-  const actionBtn = target && target.closest ? (target.closest("[data-action]") as HTMLElement | null) : null;
-  const action = actionBtn?.dataset.action;
-  if (action === "login" || action === "logout") {
-    event.stopPropagation();
-    post({ type: action });
-    closeModelPicker();
-    return;
-  }
-
   const item = target && target.closest ? (target.closest(".model-item") as HTMLElement | null) : null;
   if (!item) return;
   const provider = item.dataset.provider;

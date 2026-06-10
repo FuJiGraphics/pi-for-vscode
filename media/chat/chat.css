@@ -1103,6 +1103,71 @@ a:hover { text-decoration: underline; }
   box-shadow: 0 18px 48px var(--shadow), 0 2px 8px var(--shadow);
 }
 .app.history-open .history-panel { display: flex; }
+/* Settings panel (gear): same chrome as the history popover, content-driven. */
+.settings-panel {
+  position: absolute;
+  top: 46px;
+  left: 12px;
+  right: 12px;
+  z-index: 30;
+  max-height: min(64vh, 520px);
+  display: none;
+  flex-direction: column;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 18px 48px var(--shadow), 0 2px 8px var(--shadow);
+  overflow-y: auto;
+}
+.app.settings-open .settings-panel { display: flex; }
+.settings-section-title {
+  margin: 6px 4px 4px;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.settings-section-title + .settings-section-title,
+.settings-row + .settings-section-title,
+.settings-note + .settings-section-title,
+.settings-action + .settings-section-title { margin-top: 14px; }
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  font-size: var(--fs-meta);
+}
+.settings-row-name { flex: 1 1 auto; min-width: 0; color: var(--fg); overflow: hidden; text-overflow: ellipsis; }
+.settings-badge {
+  flex: none;
+  padding: var(--chip-pad);
+  border-radius: var(--chip-radius);
+  font-size: var(--fs-micro);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--muted);
+}
+.settings-action {
+  flex: none;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.settings-action:hover { color: var(--fg); background: var(--surface-hover); }
+.settings-action.primary {
+  align-self: flex-start;
+  margin: 6px 8px 2px;
+  color: color-mix(in srgb, var(--accent) 85%, var(--fg));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.settings-note { padding: 6px 8px; color: var(--muted); font-size: var(--fs-meta); line-height: 1.5; }
 .history-search {
   flex: 0 0 auto;
   width: 100%;
