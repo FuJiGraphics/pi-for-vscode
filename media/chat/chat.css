@@ -1861,32 +1861,38 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
 .ghost-button:active, .pill-button:active, .model-button:active { transform: scale(.96); }
 .thinking-control {
   --thinking-current-color: var(--accent);
+  --thinking-fill: 0%;
+  position: relative;
   flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 0;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
-  color: var(--muted);
-  transition: background-color 120ms ease, color 120ms ease, transform 120ms ease;
+  background: conic-gradient(var(--thinking-current-color) var(--thinking-fill), color-mix(in srgb, var(--fg) 14%, transparent) 0);
+  color: var(--thinking-current-color);
+  transition: filter 120ms ease, transform 120ms ease;
 }
-.thinking-control[data-current-level="off"] { --thinking-current-color: var(--think-off); }
-.thinking-control[data-current-level="minimal"] { --thinking-current-color: var(--think-minimal); }
-.thinking-control[data-current-level="low"] { --thinking-current-color: var(--think-low); }
-.thinking-control[data-current-level="medium"] { --thinking-current-color: var(--think-medium); }
-.thinking-control[data-current-level="high"] { --thinking-current-color: var(--think-high); }
-.thinking-control[data-current-level="xhigh"] { --thinking-current-color: var(--think-xhigh); }
+.thinking-control::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--bg);
+}
+.thinking-control[data-current-level="off"] { --thinking-current-color: var(--think-off); --thinking-fill: 0%; }
+.thinking-control[data-current-level="minimal"] { --thinking-current-color: var(--think-minimal); --thinking-fill: 20%; }
+.thinking-control[data-current-level="low"] { --thinking-current-color: var(--think-low); --thinking-fill: 40%; }
+.thinking-control[data-current-level="medium"] { --thinking-current-color: var(--think-medium); --thinking-fill: 60%; }
+.thinking-control[data-current-level="high"] { --thinking-current-color: var(--think-high); --thinking-fill: 80%; }
+.thinking-control[data-current-level="xhigh"] { --thinking-current-color: var(--think-xhigh); --thinking-fill: 100%; }
 .thinking-control:hover,
-.thinking-control:focus {
-  background: color-mix(in srgb, var(--fg) 7%, transparent);
-  color: var(--fg);
-}
+.thinking-control:focus { filter: brightness(1.1); }
 .thinking-control:active { transform: scale(.96); }
-.thinking-control svg { color: currentColor; flex: none; }
+.thinking-control svg { position: relative; z-index: 1; color: var(--thinking-current-color); flex: none; }
 /* Thinking-level popover, anchored above the composer (command-panel pattern). */
 .thinking-panel {
   position: absolute;
