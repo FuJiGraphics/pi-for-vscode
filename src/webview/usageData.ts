@@ -3,12 +3,12 @@
 // usage gauge bars. Tolerant decoder — junk payloads are ignored; no data simply means
 // no bars (providers/plans without subscription windows).
 
-/** One always-visible gauge bar: "5h" / "1w" with the percent REMAINING (battery
- *  metaphor — 1% used renders a 99% bar) and the reset time for its hover popover. */
+/** One usage gauge bar: "5h" / "1w" with the percent USED (0% unused → 100% full)
+ *  and the reset time for its hover popover. */
 export interface UsageBarRow {
   label: string;
-  /** 0-100, percent remaining. */
-  remainingPercent: number;
+  /** 0-100, percent used. */
+  usedPercent: number;
   /** "11:24 PM" / "Jun 13" / "" when the provider sent no reset. */
   reset: string;
 }
@@ -80,7 +80,7 @@ export function usageBarRows(): UsageBarRow[] {
     if (w.utilization === undefined) continue;
     rows.push({
       label: windowLabel(w.window),
-      remainingPercent: Math.max(0, Math.min(100, Math.round(100 - w.utilization))),
+      usedPercent: Math.max(0, Math.min(100, Math.round(w.utilization))),
       reset: resetLabel(w.reset),
     });
   }

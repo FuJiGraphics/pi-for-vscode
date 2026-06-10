@@ -1,7 +1,7 @@
-// The composer's thinking-level (effort) control: a labeled chip ("Thinking: high") that
-// opens a popover listing ALL standard levels with one-line descriptions — levels the
-// current model doesn't support render disabled, which teaches the control's range even
-// when unavailable. Selection passes straight through to pi's set_thinking_level (the
+// The composer's thinking-level (effort) control: an icon-only chip that opens a
+// popover listing ALL standard levels with one-line descriptions — levels the current
+// model doesn't support render disabled, which teaches the control's range even when
+// unavailable. Selection passes straight through to pi's set_thinking_level (the
 // host's ModelService); pi remains the authority on what each level means per model.
 import { state } from "./state";
 import { appEl, thinkingControlEl, thinkingListEl, thinkingPanelEl } from "./dom";
@@ -58,7 +58,7 @@ export function thinkingPanelHtml(levels: string[], current: string): string {
 }
 
 const CHIP_ICON =
-  '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8l1.2 3.4 3.4 1.2-3.4 1.2L8 11l-1.2-3.4L3.4 6.4l3.4-1.2z"/><circle cx="12.8" cy="12.8" r="1.6"/></svg>';
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.2 13.3c-1.8 0-3.2-1.1-3.2-2.6 0-.7.3-1.3.8-1.8A2.7 2.7 0 0 1 3.4 7.5c0-1.4 1-2.5 2.3-2.7A2.7 2.7 0 0 1 8 3.4a2.7 2.7 0 0 1 2.3 1.4c1.3.2 2.3 1.3 2.3 2.7 0 .5-.1 1-.4 1.4.5.5.8 1.1.8 1.8 0 1.5-1.4 2.6-3.2 2.6"/><path d="M6.2 13.3V5.5"/><path d="M9.8 13.3V5.5"/><path d="M6.2 7.2H4.9"/><path d="M9.8 7.2h1.3"/><path d="M6.2 9.6H4.8"/><path d="M9.8 9.6h1.4"/></svg>';
 
 /** Called from render(): keeps the chip's label/color in sync with the session state. */
 export function renderThinkingControl(): void {
@@ -76,8 +76,7 @@ export function renderThinkingControl(): void {
   thinkingControlEl.dataset.currentLevel = current;
   thinkingControlEl.title = "Thinking level: " + current + " - click to change";
   thinkingControlEl.setAttribute("aria-label", "Thinking level: " + current);
-  thinkingControlEl.innerHTML =
-    CHIP_ICON + '<span class="thinking-label">Thinking: ' + escapeHtml(current) + '</span><span class="chip-caret">⌄</span>';
+  thinkingControlEl.innerHTML = CHIP_ICON;
   if (isThinkingPanelOpen()) thinkingListEl.innerHTML = thinkingPanelHtml(levels, current);
 }
 

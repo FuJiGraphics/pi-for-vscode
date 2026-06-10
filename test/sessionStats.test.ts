@@ -60,15 +60,16 @@ test("SessionStatsService posts tagged stats; RPC failure posts nothing", async 
   assert.equal(posts.length, 1);
 });
 
-test("statsPopoverHtml: context-only card with big remaining percent", () => {
+test("statsPopoverHtml: compact context card includes session summary on hover", () => {
   const stats = sessionStatsFromRpc(V078_PAYLOAD)!;
   const html = statsPopoverHtml(stats);
   assert.ok(html.includes(">Context<"));
   assert.ok(html.includes("78k of 200k tokens")); // formatTokens drops decimals ≥10k
-  assert.ok(html.includes('61%<span> left</span>'));
+  assert.ok(html.includes('39%<span> used</span>'));
   assert.ok(html.includes('style="width:39%"')); // used-context mini bar
   assert.ok(html.includes(">Used<"));
-  assert.equal(html.includes(">Session<"), false);
+  assert.ok(html.includes(">Session<"));
+  assert.ok(html.includes("54k tokens · $0.42"));
   assert.equal(html.includes("Cache read"), false);
   assert.equal(html.includes("Est. API cost"), false);
   assert.equal(html.includes(">Usage remaining<"), false);
@@ -81,7 +82,7 @@ test("statsPopoverHtml: context-only card with big remaining percent", () => {
 test("statsSummary and contextLabel format Claude-style", () => {
   const stats = sessionStatsFromRpc(V078_PAYLOAD)!;
   assert.equal(statsSummary(stats), "54k tokens · $0.42");
-  assert.deepEqual(contextLabel(stats.context), { percentUsed: 39, label: "61% left" });
+  assert.deepEqual(contextLabel(stats.context), { percentUsed: 39, label: "39% used" });
   // Free model: cost segment omitted.
   assert.equal(statsSummary({ ...stats, cost: 0 }), "54k tokens");
   // Post-compaction unknown → segment omitted.

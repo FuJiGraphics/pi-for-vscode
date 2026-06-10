@@ -61,10 +61,14 @@ function renderChip(): void {
   contextChipEl.hidden = false;
   actionDividerEl.hidden = false;
   contextChipEl.classList.toggle("on", include);
-  contextChipEl.title = include
-    ? "Attached to your next prompt - click to detach"
-    : "Click to attach this file reference to your next prompt";
-  contextChipEl.innerHTML = FILE_ICON + '<span class="context-chip-label">' + escapeHtml(label) + "</span>";
+  contextChipEl.title = "";
+  contextChipEl.setAttribute(
+    "aria-label",
+    include
+      ? "Attached file reference: " + label + ". Click to detach."
+      : "File reference: " + label + ". Click to attach to your next prompt.",
+  );
+  contextChipEl.innerHTML = FILE_ICON + '<span class="context-chip-pop" role="tooltip">' + escapeHtml(label) + "</span>";
 }
 
 export function initContextChip(): void {

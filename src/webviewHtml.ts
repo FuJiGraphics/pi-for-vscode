@@ -67,7 +67,6 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
     <div id="extension-ui-root" class="extension-ui-root" aria-live="polite"></div>
     <div id="onboarding-root" class="onboarding-root" hidden></div>
     <footer class="composer-wrap">
-      <div id="usageBars" class="usage-bars" hidden></div>
       <div id="composer" class="composer">
         <div id="attachmentTray" class="attachment-tray" hidden></div>
         <textarea id="input" placeholder="Ask Pi to work in this project"></textarea>
@@ -79,14 +78,12 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
           <button class="pill-button" title="Approval mode" aria-label="Approval mode">✋ <span class="optional">Ask for approval</span>⌄</button>
           <button id="stop" class="stop-button" disabled hidden>Stop</button>
           <span class="spacer"></span>
+          <div id="usageBars" class="usage-control" hidden aria-label="Usage"></div>
+          <div id="sessionStats" class="session-stats" tabindex="0" hidden aria-label="Context usage"></div>
           <button id="thinkingControl" class="thinking-control" hidden aria-label="Thinking level" aria-haspopup="menu"></button>
-          <button id="model" class="model-button" title="Model" aria-label="Model">Pi⌄</button>
+          <button id="model" class="model-button" title="Model" aria-label="Model"><span class="model-button-label">Pi</span><svg class="model-button-caret" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6.5 8 9.5l3-3"/></svg></button>
           <button id="send" class="send-button empty" title="Send" aria-label="Send">↑</button>
         </div>
-      </div>
-      <div class="status-strip">
-        <span class="strip-spacer"></span>
-        <div id="sessionStats" class="session-stats" tabindex="0" hidden></div>
       </div>
     </footer>
   </div>

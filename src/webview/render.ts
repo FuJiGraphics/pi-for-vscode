@@ -26,6 +26,9 @@ import { applyLatestScroll, shouldFollowLatest } from "./scroll";
 import { hasPendingImageAttachments, imageDataUrl, imageMeta } from "./attachments";
 import type { UiImageAttachment, UiMessage } from "./types";
 
+const MODEL_CHEVRON =
+  '<svg class="model-button-caret" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6.5 8 9.5l3-3"/></svg>';
+
 let renderQueued = false;
 let emptyRendered = false;
 const renderedNodes = new Map<string, HTMLElement>();
@@ -445,7 +448,7 @@ export function render(): void {
   // timeline; "Interrupted" is rendered inline below the cut-off turn, not as a banner.)
   renderThinkingControl();
   renderSessionStats();
-  modelEl.textContent = (state.modelLabel || "Pi") + "⌄";
+  modelEl.innerHTML = '<span class="model-button-label">' + escapeHtml(state.modelLabel || "Pi") + "</span>" + MODEL_CHEVRON;
   stopEl.disabled = true;
   stopEl.hidden = true;
   composerEl.classList.toggle("working", !!state.running);
