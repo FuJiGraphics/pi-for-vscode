@@ -22,7 +22,7 @@ export function isSettingsOpen(): boolean {
 }
 
 export function openSettings(): void {
-  appEl.classList.remove("history-open", "model-open", "command-open", "thinking-open");
+  appEl.classList.remove("history-open", "model-open", "command-open", "thinking-open", "usage-open");
   appEl.classList.add("settings-open");
   renderSettings();
   post({ type: "requestAuthState" });

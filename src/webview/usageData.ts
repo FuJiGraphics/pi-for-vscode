@@ -9,6 +9,16 @@ export interface UsageRow {
   value: string;
 }
 
+/** One row of the Codex-style usage menu: label / big value / reset time columns. */
+export interface UsageMenuRow {
+  /** "5h", "Weekly", "Requests", … */
+  label: string;
+  /** "98%" (percent REMAINING for subscription windows) or "4.9k of 5k" for limits. */
+  value: string;
+  /** "11:24 PM" / "Jun 13" / "" when the provider sent no reset. */
+  reset: string;
+}
+
 interface UnifiedWindow {
   window: string;
   utilization?: number;
@@ -25,6 +35,12 @@ interface Limit {
 
 let unified: UnifiedWindow[] = [];
 let limits: Limit[] = [];
+
+const listeners = new Set<() => void>();
+
+export function subscribeUsageData(listener: () => void): void {
+  listeners.add(listener);
+}
 
 function num(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
@@ -52,6 +68,7 @@ export function setUsageData(payload: unknown): void {
           reset: num(l.reset),
         }))
     : [];
+  for (const listener of listeners) listener();
 }
 
 export function hasUsageData(): boolean {
@@ -59,7 +76,7 @@ export function hasUsageData(): boolean {
 }
 
 function windowLabel(window: string): string {
-  if (window === "5h") return "5h limit";
+  if (window === "5h") return "5h";
   if (window === "7d") return "Weekly";
   if (window === "overall") return "Plan";
   return window;
@@ -106,6 +123,29 @@ export function usageSummaryRows(): UsageRow[] {
     const reset = resetLabel(l.reset);
     if (reset) parts.push("resets " + reset);
     if (parts.length) rows.push({ label: kindLabel(l.kind), value: parts.join(" · ") });
+  }
+  return rows;
+}
+
+/** Rows for the Codex-style click menu: subscription windows show the percent REMAINING
+ *  ("5h · 98% · 11:24 PM"), API limits show remaining-of-limit. Empty = no data yet. */
+export function usageMenuRows(): UsageMenuRow[] {
+  const rows: UsageMenuRow[] = [];
+  for (const w of unified) {
+    const value =
+      w.utilization !== undefined
+        ? Math.max(0, Math.min(100, Math.round(100 - w.utilization))) + "%"
+        : w.status ?? "";
+    if (value) rows.push({ label: windowLabel(w.window), value, reset: resetLabel(w.reset) });
+  }
+  for (const l of limits) {
+    const value =
+      l.remaining !== undefined && l.limit !== undefined
+        ? formatTokens(l.remaining) + " of " + formatTokens(l.limit)
+        : l.remaining !== undefined
+        ? formatTokens(l.remaining) + " left"
+        : "";
+    if (value) rows.push({ label: kindLabel(l.kind), value, reset: resetLabel(l.reset) });
   }
   return rows;
 }

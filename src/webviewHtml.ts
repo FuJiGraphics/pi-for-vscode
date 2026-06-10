@@ -85,6 +85,8 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
         <button id="contextChip" class="context-chip" type="button" hidden></button>
         <span class="strip-spacer"></span>
         <div id="sessionStats" class="session-stats" tabindex="0" hidden></div>
+        <button id="usageBtn" class="usage-btn" type="button" aria-haspopup="menu" title="Provider usage remaining"></button>
+        <div id="usage-panel" class="usage-panel" role="menu" aria-label="Usage remaining"></div>
       </div>
     </footer>
   </div>

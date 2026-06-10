@@ -86,7 +86,7 @@ export function isThinkingPanelOpen(): boolean {
 }
 
 export function openThinkingPanel(): void {
-  appEl.classList.remove("history-open", "model-open", "command-open", "settings-open");
+  appEl.classList.remove("history-open", "model-open", "command-open", "settings-open", "usage-open");
   appEl.classList.add("thinking-open");
   const levels = state.thinkingLevels;
   const current = levels.includes(state.thinkingLevel) ? state.thinkingLevel : levels[0] || "off";

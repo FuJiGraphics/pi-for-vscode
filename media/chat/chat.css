@@ -1502,6 +1502,7 @@ a:hover { text-decoration: underline; }
    reuses .activity-working-dot's pulse so it reads as live, not a static badge. */
 /* Bottom status strip (Codex-style): file-reference chip left, usage cluster right. */
 .status-strip {
+  position: relative; /* anchors the usage panel */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1582,6 +1583,60 @@ a:hover { text-decoration: underline; }
   background: color-mix(in srgb, var(--fg) 12%, transparent);
 }
 .sp-bar span { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+/* Codex-style "Usage remaining" click menu in the status strip. */
+.usage-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+  transition: color 130ms ease, background-color 130ms ease, border-color 130ms ease;
+}
+.usage-btn:hover { color: var(--fg); background: var(--surface-hover); }
+.usage-btn.has-data { color: color-mix(in srgb, var(--accent) 75%, var(--fg)); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.app.usage-open .usage-btn { color: var(--fg); background: var(--surface-hover); }
+.usage-panel {
+  display: none;
+  position: absolute;
+  right: 10px;
+  bottom: calc(100% + 8px);
+  width: min(270px, calc(100% - 24px));
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 14px 36px var(--shadow);
+  z-index: 40;
+}
+.app.usage-open .usage-panel { display: block; }
+.usage-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  font-weight: 700;
+}
+.usage-head svg { color: var(--accent); }
+.usage-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: var(--fs-body);
+}
+.usage-row + .usage-row { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+.usage-label { flex: 1 1 auto; min-width: 0; color: var(--fg); font-weight: 700; }
+.usage-value { flex: none; color: var(--fg); font-variant-numeric: tabular-nums; }
+.usage-reset { flex: none; min-width: 64px; text-align: right; color: var(--muted); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
+.usage-empty { color: var(--muted); font-size: var(--fs-meta); line-height: 1.5; max-width: 240px; }
 
 /* Mid-run sends waiting in pi's steer/follow-up queue: dimmed until pi consumes them. */
 .message.user.pending .bubble { opacity: .62; }
