@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- Show provider "Usage remaining" (Codex-style): a new usage bridge subscribes to pi's `after_provider_response` extension event and forwards rate-limit headers (Anthropic subscription 5h/weekly windows, API request/token limits, OpenAI x-ratelimit) into the stats popover — shown only when the provider sends them.
-- Bottom status strip below the composer: the active-file reference chip on the left, and on the right the session tokens · cost with a circular context gauge ("61% left", warning tone past 80%). Hovering opens a detailed popover (context breakdown, input/output/cache split, estimated API cost, usage remaining).
+- Redesign the composer footer in a Claude Code-style layout: active-file references now sit in the action row after the `+` button, the context gauge shows the remaining percent in the center, and Codex OAuth usage appears as always-visible 5h/1w bars above the composer.
+- Simplify the session stats strip below the composer: it keeps the tokens · cost summary and circular context gauge, while the hover popover now focuses only on context usage.
 - Redesigned Settings panel: header with close button, card sections with icons, per-provider rows with credential glyphs, destructive hover for sign-out, full-width sign-in button.
 
 - Interleave assistant narration chronologically in the activity timeline (Claude Code-style flow): intermediate text now lands between the tool steps it precedes, and the final answer stays in the bubble. This also fixes intermediate narration being overwritten on multi-call turns.
