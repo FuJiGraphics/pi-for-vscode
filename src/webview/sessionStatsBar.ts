@@ -54,7 +54,9 @@ export function renderSessionStats(): void {
   if (sessionStatsEl.dataset.sig === sig) return; // unrelated renders don't rewrite (keeps hover stable)
   sessionStatsEl.dataset.sig = sig;
 
-  const tone = ctxInfo.percentUsed > 80 ? "var(--error)" : "var(--accent)";
+  const tone = ctxInfo.percentUsed > 80
+    ? "color-mix(in srgb, var(--error) 72%, var(--muted))"
+    : "color-mix(in srgb, var(--accent) 68%, var(--muted))";
   sessionStatsEl.innerHTML =
     '<span class="ctx-gauge" style="background: conic-gradient(' + tone + " " +
     ctxInfo.percentUsed + '%, color-mix(in srgb, var(--fg) 14%, transparent) 0)">' +
