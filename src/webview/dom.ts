@@ -43,3 +43,4 @@ export const modelSearchEl = byId<HTMLInputElement>("model-search");
 export const commandPanelEl = byId<HTMLElement>("command-panel");
 export const commandListEl = byId<HTMLElement>("command-list");
 export const extensionUiRootEl = byId<HTMLElement>("extension-ui-root");
+export const onboardingRootEl = byId<HTMLElement>("onboarding-root");

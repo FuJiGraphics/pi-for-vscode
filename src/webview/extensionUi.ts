@@ -21,6 +21,33 @@ const widgetEntries = new Map<string, string[]>();
 const openedUrls = new Set<string>();
 let activeDialog: DialogState | undefined;
 
+/** A pluggable surface that can host the pi UI dialogs instead of the default modal root —
+ *  the onboarding gate registers one so the auth-bridge's select/input/notify steps render
+ *  INSIDE the gate (styled as onboarding steps). Dialog logic is unchanged; only where the
+ *  markup lands. While the host is inactive, behavior is exactly as before. */
+export interface DialogHost {
+  el: () => HTMLElement | null;
+  active: () => boolean;
+  notify?: (message: string, isError: boolean) => void;
+}
+
+let dialogHost: DialogHost | undefined;
+
+export function registerDialogHost(host: DialogHost): void {
+  dialogHost = host;
+}
+
+/** Cancel whatever pi dialog is open (the gate's Back button) — pi's awaited ui.select/
+ *  input resolves cancelled and the bridge reports "Login cancelled". */
+export function cancelActiveDialog(): void {
+  if (activeDialog) sendResponse(activeDialog.request, { cancelled: true });
+}
+
+function hostedEl(): HTMLElement | undefined {
+  if (!dialogHost?.active()) return undefined;
+  return dialogHost.el() ?? undefined;
+}
+
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -141,38 +168,38 @@ function statusHtml(): string {
   return '<div class="extension-ui-stack">' + statusRows + widgetRows + "</div>";
 }
 
-function attachDialogHandlers(): void {
+function attachDialogHandlers(root: HTMLElement): void {
   const dialog = activeDialog;
   if (!dialog) return;
   const { request, method } = dialog;
 
   const cancel = () => sendResponse(request, { cancelled: true });
-  extensionUiRootEl.querySelectorAll<HTMLElement>('[data-ext-ui="cancel"]').forEach((el) => {
+  root.querySelectorAll<HTMLElement>('[data-ext-ui="cancel"]').forEach((el) => {
     el.addEventListener("click", cancel);
   });
 
   if (method === "select") {
     const options = selectOptions(request);
-    extensionUiRootEl.querySelectorAll<HTMLElement>('[data-ext-ui="select-option"]').forEach((el) => {
+    root.querySelectorAll<HTMLElement>('[data-ext-ui="select-option"]').forEach((el) => {
       el.addEventListener("click", () => {
         const index = Number(el.dataset.index);
         const option = Number.isInteger(index) ? options[index] : undefined;
         if (option) sendResponse(request, { value: option.value });
       });
     });
-    extensionUiRootEl.querySelector<HTMLElement>('[data-ext-ui="select-option"]')?.focus();
+    root.querySelector<HTMLElement>('[data-ext-ui="select-option"]')?.focus();
     return;
   }
 
   if (method === "confirm") {
-    extensionUiRootEl.querySelector<HTMLElement>('[data-ext-ui="confirm-no"]')?.addEventListener("click", () => sendResponse(request, { confirmed: false }));
-    extensionUiRootEl.querySelector<HTMLElement>('[data-ext-ui="confirm-yes"]')?.addEventListener("click", () => sendResponse(request, { confirmed: true }));
-    extensionUiRootEl.querySelector<HTMLElement>('[data-ext-ui="confirm-yes"]')?.focus();
+    root.querySelector<HTMLElement>('[data-ext-ui="confirm-no"]')?.addEventListener("click", () => sendResponse(request, { confirmed: false }));
+    root.querySelector<HTMLElement>('[data-ext-ui="confirm-yes"]')?.addEventListener("click", () => sendResponse(request, { confirmed: true }));
+    root.querySelector<HTMLElement>('[data-ext-ui="confirm-yes"]')?.focus();
     return;
   }
 
-  const form = extensionUiRootEl.querySelector<HTMLFormElement>('[data-ext-ui-form="input"]');
-  const field = extensionUiRootEl.querySelector<HTMLInputElement | HTMLTextAreaElement>("[data-ext-ui-field]");
+  const form = root.querySelector<HTMLFormElement>('[data-ext-ui-form="input"]');
+  const field = root.querySelector<HTMLInputElement | HTMLTextAreaElement>("[data-ext-ui-field]");
   form?.addEventListener("submit", (event) => {
     event.preventDefault();
     sendResponse(request, { value: field?.value ?? "" });
@@ -180,8 +207,8 @@ function attachDialogHandlers(): void {
   field?.focus();
 }
 
-function attachChromeHandlers(): void {
-  extensionUiRootEl.querySelectorAll<HTMLElement>("[data-ext-url]").forEach((el) => {
+function attachChromeHandlers(root: HTMLElement): void {
+  root.querySelectorAll<HTMLElement>("[data-ext-url]").forEach((el) => {
     el.addEventListener("click", () => {
       const url = el.dataset.extUrl;
       if (url) post({ type: "openExternal", url });
@@ -190,9 +217,12 @@ function attachChromeHandlers(): void {
 }
 
 function renderExtensionUi(): void {
-  extensionUiRootEl.innerHTML = statusHtml() + (activeDialog ? dialogHtml(activeDialog) : "");
-  attachChromeHandlers();
-  attachDialogHandlers();
+  const hosted = hostedEl();
+  const root = hosted ?? extensionUiRootEl;
+  if (hosted) extensionUiRootEl.innerHTML = ""; // never two copies of the same dialog
+  root.innerHTML = statusHtml() + (activeDialog ? dialogHtml(activeDialog) : "");
+  attachChromeHandlers(root);
+  attachDialogHandlers(root);
 }
 
 export function handleExtensionUiRequest(request: UiRequest): void {
@@ -200,6 +230,12 @@ export function handleExtensionUiRequest(request: UiRequest): void {
   if (method === "notify") {
     const message = text(request.message) || "Notification";
     openUrlOnce(firstUrl(message));
+    // While the onboarding gate hosts the flow, its inline notice replaces the system
+    // message (the chat is hidden behind the gate — a bubble there would be invisible).
+    if (dialogHost?.active() && dialogHost.notify) {
+      dialogHost.notify(message, request.notifyType === "error");
+      return;
+    }
     addMessage("system", message, { error: request.notifyType === "error", pre: message.length > 240 });
     return;
   }

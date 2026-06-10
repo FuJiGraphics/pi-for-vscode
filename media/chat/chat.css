@@ -480,6 +480,72 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: none; }
 }
+/* Onboarding gate: full-screen sign-in overlay shown while unauthenticated. Above the
+   panels (z 30), below the pi dialog modals (z 80) and the boot splash (z 100). */
+.onboarding-root {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  overflow-y: auto;
+  background: var(--bg);
+  transition: opacity 420ms ease;
+}
+.onboarding-root.hide { opacity: 0; }
+.onboarding-inner {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 28px 22px;
+  text-align: center;
+}
+.onboarding-word {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: .06em;
+}
+.onboarding-tagline { color: var(--muted); font-size: var(--fs-body); margin-bottom: 8px; }
+.onboarding-cards { display: flex; flex-direction: column; gap: 10px; width: min(320px, 100%); }
+.onboarding-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 13px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+.onboarding-card:hover {
+  background: var(--surface-hover);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  transform: translateY(-1px);
+}
+.onboarding-card-title { color: var(--fg); font-weight: 600; font-size: var(--fs-body); }
+.onboarding-card-desc { color: var(--muted); font-size: var(--fs-meta); }
+.onboarding-fallback { color: var(--muted); font-size: var(--fs-meta); max-width: 340px; line-height: 1.5; }
+.onboarding-notice { color: var(--muted); font-size: var(--fs-meta); max-width: 340px; white-space: pre-wrap; }
+.onboarding-notice.error { color: var(--error); }
+.onboarding-back {
+  margin-top: 6px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.onboarding-back:hover { color: var(--fg); background: var(--surface-hover); }
+/* pi dialogs hosted inside the gate render as inline onboarding steps, not modals. */
+.onboarding-step-root { width: min(360px, 100%); }
+.onboarding-step-root .extension-ui-overlay { position: static; inset: auto; background: none; display: block; padding: 0; }
+.onboarding-step-root .extension-ui-panel { box-shadow: none; border: 1px solid var(--border); width: 100%; max-width: none; }
+.onboarding-step-root .extension-ui-stack { position: static; margin-bottom: 10px; }
 .activity {
   margin: 0 0 16px;
   color: var(--muted);

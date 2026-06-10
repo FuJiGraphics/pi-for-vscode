@@ -13,6 +13,7 @@ import { initImageAttachments } from "./attachments";
 import { closeHistory, toggleHistory, renderSessionList, initHistory } from "./history";
 import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker, setAuthAvailable } from "./modelPicker";
 import { setAboutInfo, setAuthState, setAuthAvailable as setBridgeAuthAvailable } from "./authState";
+import { initOnboarding, onboardingConnectionChange } from "./onboarding";
 import { acceptActive, closeCommandMenu, initCommandMenu, invalidateCommands, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
 import { initContextChip, resetContextInclude, updateEditorContext } from "./contextChip";
 import { initThinkingControl, supportedThinkingLevels } from "./thinkingControl";
@@ -302,7 +303,10 @@ const inbound: InboundTable = {
     addMessage("system", text, { error: /error|failed|closed/i.test(text) });
   },
   stderr: (m) => handleStderr(m.text || ""),
-  connection: (m) => updateConnectionBanner(m.status),
+  connection: (m) => {
+    updateConnectionBanner(m.status);
+    onboardingConnectionChange(m.status);
+  },
   sessionList: (m) => renderSessionList(m.sessions),
   commandList: (m) => {
     renderCommandList(m.commands);
@@ -332,6 +336,7 @@ initModelPicker();
 initCommandMenu();
 initThinkingControl();
 initContextChip();
+initOnboarding();
 initImageAttachments(() => {
   autoResizeInput();
   updateInputState();
