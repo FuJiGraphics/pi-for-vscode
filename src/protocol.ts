@@ -177,6 +177,14 @@ export interface SessionStats {
   context?: { tokens: number | null; contextWindow: number; percent: number | null };
 }
 
+/** One provider with credentials stored in pi's ~/.pi/agent/auth.json. METADATA ONLY —
+ *  the id and credential kind; key material never crosses this protocol. */
+export interface AuthProviderStatus {
+  /** Pi provider id, e.g. "anthropic". */
+  id: string;
+  authType: "oauth" | "api_key";
+}
+
 /** A slash command Pi exposes via the `get_commands` RPC (skill / prompt-template / extension). */
 export interface CommandListItem {
   /** Text inserted after the slash, e.g. "review" or "skill:foo" (no leading slash). */
@@ -210,8 +218,12 @@ export type WebviewToExtensionMessage =
   | { type: "requestCommands" }
   | { type: "setModel"; provider: string; modelId: string }
   | { type: "setThinkingLevel"; level: string }
-  | { type: "login" }
-  | { type: "logout" }
+  // Auth flows run through pi's auth-bridge commands; `method`/`provider` pre-answer the
+  // bridge's first select so the onboarding cards / settings rows skip a redundant dialog.
+  | { type: "login"; method?: "subscription" | "api-key" }
+  | { type: "logout"; provider?: string }
+  | { type: "requestAuthState" }
+  | { type: "requestAbout" }
   | { type: "getState" }
   | { type: "copy"; text?: string }
   | { type: "openExternal"; url: string }
@@ -256,6 +268,11 @@ export type ExtensionToWebviewMessage =
   | { type: "modelList"; models: ModelListItem[] }
   // Authoritative cumulative usage/cost/context for one session (pi's get_session_stats).
   | { type: "sessionStats"; sessionId: string; stats: SessionStats }
+  // Host-computed auth verdict (pi's get_available_models outcome + auth.json metadata).
+  // "unknown" must FAIL OPEN — the webview never blocks the chat on it.
+  | { type: "authState"; status: "authenticated" | "unauthenticated" | "unknown"; providers: AuthProviderStatus[] }
+  // Extension/pi version info for the settings About section.
+  | { type: "about"; extensionVersion: string; piVersion?: string; piSource?: string }
   // `authAvailable` reflects whether the bundled auth bridge registered its login command in
   // this pi runtime (derived from get_commands). Omitted when unknown (e.g. RPC failure) —
   // the webview then keeps the optimistic default.

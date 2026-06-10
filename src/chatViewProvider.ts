@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
-import { repairBundledPi } from "./piResolver";
+import { detectPiVersion, repairBundledPi, resolvePiRuntime } from "./piResolver";
+import { AuthStatusService } from "./authStatusService";
 import { BundledExtensionResolver } from "./bundledExtensionResolver";
 import { WebviewPresenter } from "./webviewPresenter";
 import { RpcEventRouter } from "./rpcEventRouter";
@@ -24,6 +25,10 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
   private readonly presenter = new WebviewPresenter();
   private readonly stats = new SessionStatsService(this.presenter);
   private readonly events = new RpcEventRouter(this.presenter, this.stats);
+  // refreshModels is a lambda so the late-bound this.models is read at call time.
+  private readonly authStatus = new AuthStatusService(this.presenter, {
+    refreshModels: () => this.models.postModelList(true),
+  });
   private readonly bundled: BundledExtensionResolver;
   private readonly manager: SessionRuntimeManager;
   private readonly models: ModelService;
@@ -41,7 +46,9 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
       requestState: (client) => this.manager.requestState(client),
       postState: () => this.manager.postState(),
       reportRuntimeError: (error) => this.manager.reportRuntimeError(error),
+      onModelsFetched: (models) => this.authStatus.noteModels(models),
     });
+    this.authStatus.start();
     this.commandPalette = new CommandPaletteService(this.presenter, {
       ensureActiveRuntime: () => this.manager.ensureActiveRuntime(),
     });
@@ -121,6 +128,7 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
   dispose(): void {
     this.presenter.disposeListeners();
+    this.authStatus.dispose();
     this.manager.disposeAll();
   }
 
@@ -149,6 +157,9 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
           } else {
             await this.manager.postState();
           }
+          // Quiet auth check: the fetch outcome flows to AuthStatusService.noteModels,
+          // which posts the authState verdict that gates the onboarding screen.
+          void this.models.postModelList(true);
           return;
         }
         case "prompt":
@@ -191,10 +202,23 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
           await this.models.setThinkingLevel(message.level);
           return;
         case "login":
-          await this.runAuthCommand("/login");
+          await this.runAuthCommand(
+            message.method === "subscription" ? "/login subscription"
+              : message.method === "api-key" ? "/login api-key"
+              : "/login",
+          );
           return;
-        case "logout":
-          await this.runAuthCommand("/logout");
+        case "logout": {
+          // Validate before interpolating into the bridge command line.
+          const provider = message.provider && /^[A-Za-z0-9_-]+$/.test(message.provider) ? message.provider : undefined;
+          await this.runAuthCommand(provider ? `/logout ${provider}` : "/logout");
+          return;
+        }
+        case "requestAuthState":
+          await this.authStatus.postAuthState();
+          return;
+        case "requestAbout":
+          await this.postAbout();
           return;
         case "getState":
           await this.manager.postState();
@@ -234,10 +258,25 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     }
   }
 
-  private async runAuthCommand(command: "/login" | "/logout"): Promise<void> {
+  private async runAuthCommand(command: string): Promise<void> {
     await this.prompt(command);
     await this.manager.postState();
     await this.models.postModelList();
+  }
+
+  private async postAbout(): Promise<void> {
+    const packageJson = this.context.extension.packageJSON as { version?: unknown } | undefined;
+    const extensionVersion = typeof packageJson?.version === "string" ? packageJson.version : "";
+    let piVersion: string | undefined;
+    let piSource: string | undefined;
+    try {
+      const runtime = await resolvePiRuntime(this.context);
+      piSource = runtime.source;
+      piVersion = await detectPiVersion(runtime);
+    } catch {
+      // pi not installed — About shows the extension version only.
+    }
+    this.presenter.post({ type: "about", extensionVersion, piVersion, piSource });
   }
 
   private async openExternal(url: string): Promise<void> {

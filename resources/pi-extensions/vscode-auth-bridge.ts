@@ -191,14 +191,23 @@ async function loginWithOAuth(ctx: AnyRecord, bridge: { modelRegistry: AnyRecord
   }
 }
 
-async function login(_args: string, ctx: AnyRecord): Promise<void> {
+// "/login subscription" / "/login api-key" (from the VS Code onboarding cards) pre-answer
+// the method select; a bare "/login" keeps the interactive select.
+function parseLoginMethod(args: string): AuthType | undefined {
+  const token = String(args || "").trim().split(/\s+/)[0]?.toLowerCase();
+  if (token === "subscription" || token === "oauth") return "oauth";
+  if (token === "api-key" || token === "apikey" || token === "key") return "api_key";
+  return undefined;
+}
+
+async function login(args: string, ctx: AnyRecord): Promise<void> {
   const bridge = getAuthBridge(ctx);
   if (!bridge) {
     ctx.ui.notify(FALLBACK_MESSAGE, "warning");
     return;
   }
 
-  const authType = await selectAuthType(ctx.ui);
+  const authType = parseLoginMethod(args) ?? await selectAuthType(ctx.ui);
   if (!authType) return;
   const options = getLoginProviderOptions(bridge.modelRegistry, bridge.authStorage, authType);
   if (options.length === 0) {
@@ -212,7 +221,7 @@ async function login(_args: string, ctx: AnyRecord): Promise<void> {
   else await loginWithApiKey(ctx, bridge, option);
 }
 
-async function logout(_args: string, ctx: AnyRecord): Promise<void> {
+async function logout(args: string, ctx: AnyRecord): Promise<void> {
   const bridge = getAuthBridge(ctx);
   if (!bridge) {
     ctx.ui.notify(FALLBACK_MESSAGE, "warning");
@@ -225,7 +234,10 @@ async function logout(_args: string, ctx: AnyRecord): Promise<void> {
     return;
   }
 
-  const option = await selectOption(ctx.ui, "Select provider to sign out:", options);
+  // "/logout <provider>" (from the VS Code settings rows) skips the provider select.
+  const requested = String(args || "").trim().split(/\s+/)[0];
+  const preselected = requested ? options.find((candidate) => candidate.id === requested) : undefined;
+  const option = preselected ?? await selectOption(ctx.ui, "Select provider to sign out:", options);
   if (!option) return;
   bridge.authStorage.logout(option.id);
   refreshModels(bridge.modelRegistry);

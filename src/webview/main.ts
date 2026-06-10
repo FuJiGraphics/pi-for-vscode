@@ -12,6 +12,7 @@ import { submitInput, autoResizeInput, updateInputState, composerIsEmpty } from 
 import { initImageAttachments } from "./attachments";
 import { closeHistory, toggleHistory, renderSessionList, initHistory } from "./history";
 import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker, setAuthAvailable } from "./modelPicker";
+import { setAboutInfo, setAuthState, setAuthAvailable as setBridgeAuthAvailable } from "./authState";
 import { acceptActive, closeCommandMenu, initCommandMenu, invalidateCommands, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
 import { initContextChip, resetContextInclude, updateEditorContext } from "./contextChip";
 import { initThinkingControl, supportedThinkingLevels } from "./thinkingControl";
@@ -306,7 +307,10 @@ const inbound: InboundTable = {
   commandList: (m) => {
     renderCommandList(m.commands);
     setAuthAvailable(m.authAvailable);
+    setBridgeAuthAvailable(m.authAvailable);
   },
+  authState: (m) => setAuthState(m.status, m.providers),
+  about: (m) => setAboutInfo({ extensionVersion: m.extensionVersion, piVersion: m.piVersion, piSource: m.piSource }),
   modelList: (m) => renderModelList(m.models),
   sessionStats: (m) => withSession(m.sessionId, () => {
     state.stats = m.stats;

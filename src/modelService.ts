@@ -89,6 +89,9 @@ export interface ModelServiceDeps {
   requestState(client: PiRpcClient): Promise<Record<string, unknown> | undefined>;
   postState(): Promise<unknown>;
   reportRuntimeError(error: unknown): void;
+  /** Every fetch outcome, for the auth-status verdict: items on success (possibly empty —
+   *  that's the authoritative "no provider has auth"), undefined on failure / no runtime. */
+  onModelsFetched?(models: ModelListItem[] | undefined): void;
 }
 
 // Model picker + switching through Pi's official RPC. Pi owns auth, providers,
@@ -99,13 +102,15 @@ export class ModelService {
     private readonly deps: ModelServiceDeps,
   ) {}
 
-  async postModelList(): Promise<void> {
+  /** `quiet` suppresses the system-message error spam for background auth checks. */
+  async postModelList(quiet = false): Promise<void> {
     const rt = await this.deps.ensureActiveRuntime().catch((error) => {
-      this.deps.reportRuntimeError(error);
+      if (!quiet) this.deps.reportRuntimeError(error);
       return undefined;
     });
     const client = rt?.client;
     if (!client) {
+      this.deps.onModelsFetched?.(undefined);
       this.presenter.post({ type: "modelList", models: [] });
       return;
     }
@@ -116,16 +121,20 @@ export class ModelService {
         this.deps.requestState(client),
       ]);
       if (modelsResponse.success === false) {
-        this.presenter.postSystem(`Failed to load models: ${String(modelsResponse.error ?? "unknown error")}`);
+        if (!quiet) this.presenter.postSystem(`Failed to load models: ${String(modelsResponse.error ?? "unknown error")}`);
+        this.deps.onModelsFetched?.(undefined);
         this.presenter.post({ type: "modelList", models: [] });
         return;
       }
 
       const data = asRecord(modelsResponse.data);
       const models = Array.isArray(data?.models) ? data.models : modelsResponse.data;
-      this.presenter.post({ type: "modelList", models: modelListItemsFromRpc(models, asRecord(state)?.model) });
+      const items = modelListItemsFromRpc(models, asRecord(state)?.model);
+      this.deps.onModelsFetched?.(items);
+      this.presenter.post({ type: "modelList", models: items });
     } catch (error) {
-      this.presenter.postSystem(`Failed to load models: ${error instanceof Error ? error.message : String(error)}`);
+      if (!quiet) this.presenter.postSystem(`Failed to load models: ${error instanceof Error ? error.message : String(error)}`);
+      this.deps.onModelsFetched?.(undefined);
       this.presenter.post({ type: "modelList", models: [] });
     }
   }
