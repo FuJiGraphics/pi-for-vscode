@@ -6,7 +6,6 @@ import { ensureAnimating } from "./animator";
 import { finalizeOrPrune } from "./turnBoundary";
 import { uid } from "./util";
 import { effectiveExpanded } from "./cards";
-import { thinkingStepFromBlock } from "./thinkingSteps";
 import type { Activity, ActivityStep, UiImageAttachment, UiMessage, UiPrompt, UiRole } from "./types";
 
 export function getMessage(id: string | null | undefined): UiMessage | undefined {
@@ -263,84 +262,4 @@ export function textFromContent(content: unknown, includeImages = false): string
     .join(String.fromCharCode(10));
 }
 
-function imageAttachmentFromBlock(block: Record<string, unknown>, index: number): UiImageAttachment | undefined {
-  if (block.type !== "image") return undefined;
-
-  let data = typeof block.data === "string" ? block.data : "";
-  let mimeType = typeof block.mimeType === "string" ? block.mimeType : "";
-  const source = block.source && typeof block.source === "object" ? block.source as Record<string, unknown> : undefined;
-  if (!data && source?.type === "base64" && typeof source.data === "string") data = source.data;
-  if (!mimeType && source?.type === "base64" && typeof source.media_type === "string") mimeType = source.media_type;
-
-  data = data.trim();
-  mimeType = mimeType.trim().toLowerCase();
-  if (!data || !mimeType.startsWith("image/")) return undefined;
-  const extension = mimeType.split("/")[1] || "image";
-  return {
-    id: "session-image-" + index + "-" + data.slice(0, 10),
-    name: "image." + extension,
-    data,
-    mimeType,
-  };
-}
-
-function imageAttachmentsFromContent(content: unknown): UiImageAttachment[] {
-  if (!Array.isArray(content)) return [];
-  return content
-    .map((block, index) => block && typeof block === "object" ? imageAttachmentFromBlock(block as Record<string, unknown>, index) : undefined)
-    .filter((attachment): attachment is UiImageAttachment => Boolean(attachment));
-}
-
-export function sessionMessageToUi(message: any, index: number): UiMessage | null {
-  if (!message || typeof message !== "object") return null;
-  const timestamp = typeof message.timestamp === "number" ? message.timestamp : Date.now();
-  if (message.role === "user") {
-    const text = textFromContent(message.content, false).trim();
-    const attachments = imageAttachmentsFromContent(message.content);
-    return text || attachments.length > 0
-      ? { id: "session-user-" + index + "-" + timestamp, role: "user", text, attachments, createdAt: timestamp }
-      : null;
-  }
-  if (message.role === "assistant") {
-    const text = textFromContent(message.content, false).trim();
-    // Rebuild thinking blocks as collapsed timeline steps so reopened sessions keep them.
-    const thinkingSteps: ActivityStep[] = Array.isArray(message.content)
-      ? (message.content as unknown[])
-          .filter((b): b is Record<string, unknown> => !!b && typeof b === "object" && (b as { type?: unknown }).type === "thinking")
-          .map((b, i) => thinkingStepFromBlock(b, timestamp, i, index))
-          .filter((s) => s.thinkingText || s.redacted)
-      : [];
-    if (!text && thinkingSteps.length === 0) return null;
-    return {
-      id: "session-assistant-" + index + "-" + timestamp,
-      role: "assistant",
-      text,
-      createdAt: timestamp,
-      activity: thinkingSteps.length
-        ? { startedAt: timestamp, endedAt: timestamp, expanded: false, steps: thinkingSteps }
-        : undefined,
-    };
-  }
-  if (message.role === "custom" && message.display) {
-    const text = textFromContent(message.content, true).trim();
-    return text ? { id: "session-custom-" + index + "-" + timestamp, role: "system", text, createdAt: timestamp } : null;
-  }
-  if (message.role === "compactionSummary" && message.summary) {
-    return {
-      id: "session-summary-" + index + "-" + timestamp,
-      role: "system",
-      text: "Compacted context: " + message.summary,
-      createdAt: timestamp,
-    };
-  }
-  return null;
-}
-
-export function hydrateSessionMessages(messages: unknown): void {
-  const converted = Array.isArray(messages)
-    ? messages.map((m, i) => sessionMessageToUi(m, i)).filter((m): m is UiMessage => Boolean(m))
-    : [];
-  state.messages = converted;
-  state.currentAssistantId = null;
-  scheduleRender();
-}
+// Session-file hydration (the folding restore) lives in sessionHydrate.ts.

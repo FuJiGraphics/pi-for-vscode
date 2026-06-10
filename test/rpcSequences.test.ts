@@ -5,7 +5,8 @@ import assert from "node:assert/strict";
 import "./_bridgeStub";
 import "./_domStub";
 import { state, activateSession } from "../src/webview/state";
-import { addMessage, hydrateSessionMessages, setRunning } from "../src/webview/conversation";
+import { addMessage, setRunning } from "../src/webview/conversation";
+import { hydrateSessionMessages } from "../src/webview/sessionHydrate";
 import { handleRpcEvent } from "../src/webview/handlers";
 import { isThinkingStep } from "../src/webview/thinkingSteps";
 import { isTextStep } from "../src/webview/textSteps";
@@ -248,7 +249,7 @@ test("O. Stop mid-thinking finalizes the step with its partial text", () => {
   assert.equal(steps[0].thinkingText, "cut off");
 });
 
-test("P. hydrate restores thinking blocks as collapsed steps (thinking-only message survives)", () => {
+test("P. hydrate restores thinking blocks as steps (thinking-only turn survives)", () => {
   fresh();
   hydrateSessionMessages([
     { role: "user", content: "q", timestamp: 1 },
@@ -260,15 +261,111 @@ test("P. hydrate restores thinking blocks as collapsed steps (thinking-only mess
         { type: "text", text: "answer" },
       ],
     },
-    { role: "assistant", timestamp: 3, content: [{ type: "thinking", thinking: "[Reasoning redacted]", redacted: true }] },
+    { role: "user", content: "more", timestamp: 3 },
+    { role: "assistant", timestamp: 4, content: [{ type: "thinking", thinking: "[Reasoning redacted]", redacted: true }] },
   ]);
-  assert.deepEqual(shape(), [["user", "q"], ["assistant", "answer"], ["assistant", ""]]);
+  assert.deepEqual(shape(), [["user", "q"], ["assistant", "answer"], ["user", "more"], ["assistant", ""]]);
   const first = assistants()[0].activity?.steps ?? [];
   assert.equal(first.length, 1);
   assert.equal(first[0].thinkingText, "stored reasoning");
   assert.equal(first[0].status, "done");
   const second = assistants()[1].activity?.steps ?? [];
   assert.equal(second[0].redacted, true);
+});
+
+test("P2. hydrate folds a multi-call run: text steps, generation checkpoints, tool steps with outputs", () => {
+  fresh();
+  hydrateSessionMessages([
+    { role: "user", content: "fix it", timestamp: 1 },
+    {
+      role: "assistant",
+      timestamp: 2,
+      stopReason: "toolUse",
+      usage: { totalTokens: 120, cost: { total: 0.02 } },
+      content: [
+        { type: "text", text: "Checking the config." },
+        { type: "toolCall", id: "call_1", name: "read", arguments: { path: "src/a.ts" } },
+      ],
+    },
+    {
+      role: "toolResult",
+      timestamp: 3,
+      toolCallId: "call_1",
+      content: [{ type: "text", text: "line1\nline2" }],
+      isError: false,
+    },
+    {
+      role: "assistant",
+      timestamp: 4,
+      stopReason: "stop",
+      usage: { totalTokens: 80, cost: { total: 0.01 } },
+      content: [{ type: "text", text: "Fixed." }],
+    },
+  ]);
+  assert.deepEqual(shape(), [["user", "fix it"], ["assistant", "Fixed."]]);
+  const a = assistants()[0];
+  assert.equal(a.tokens, 200);
+  const steps = a.activity?.steps ?? [];
+  const flow = steps.map((s) => (isTextStep(s) ? "text:" + s.text : s.kind === "generation" ? "gen" : s.id));
+  assert.deepEqual(flow, ["text:Checking the config.", "gen", "call_1", "gen"]);
+  const tool = steps.find((s) => s.id === "call_1")!;
+  assert.equal(tool.tool, "read");
+  assert.equal(tool.detail, "src/a.ts");
+  assert.equal(tool.output?.text, "line1\nline2");
+  assert.equal(tool.status, "done");
+});
+
+test("P3. live↔hydrate structural parity: the same turn replays and restores to the same step sequence", () => {
+  // Live replay of a two-call turn.
+  fresh();
+  sendUser("go");
+  replay([
+    ev.agentStart(), ev.userStart("go"),
+    think.start(), think.delta("plan"), think.end(),
+    ev.delta("Reading first."),
+    ev.asstEndRaw({
+      content: [
+        { type: "thinking", thinking: "plan" },
+        { type: "text", text: "Reading first." },
+        { type: "toolCall", id: "call_9", name: "read", arguments: { path: "x.ts" } },
+      ],
+      stopReason: "toolUse",
+      usage: { totalTokens: 50, cost: { total: 0.005 } },
+    }),
+    ev.toolStart("call_9", "read"), ev.toolEnd("call_9", "read"),
+    ev.asstEndRaw({ content: [{ type: "text", text: "All done." }], stopReason: "stop", usage: { totalTokens: 30, cost: { total: 0.003 } } }),
+    ev.agentEnd(),
+  ]);
+  const liveShape = {
+    text: assistants()[0].text,
+    tokens: assistants()[0].tokens,
+    steps: (assistants()[0].activity?.steps ?? []).map((s) => [s.kind ?? "tool", s.kind ? "" : s.id, s.status]),
+  };
+
+  // Hydrate the equivalent on-disk record into a fresh session.
+  fresh();
+  hydrateSessionMessages([
+    { role: "user", content: "go", timestamp: 1 },
+    {
+      role: "assistant",
+      timestamp: 2,
+      stopReason: "toolUse",
+      usage: { totalTokens: 50, cost: { total: 0.005 } },
+      content: [
+        { type: "thinking", thinking: "plan" },
+        { type: "text", text: "Reading first." },
+        { type: "toolCall", id: "call_9", name: "read", arguments: { path: "x.ts" } },
+      ],
+    },
+    { role: "toolResult", timestamp: 3, toolCallId: "call_9", content: [{ type: "text", text: "…" }], isError: false },
+    { role: "assistant", timestamp: 4, stopReason: "stop", usage: { totalTokens: 30, cost: { total: 0.003 } }, content: [{ type: "text", text: "All done." }] },
+  ]);
+  const hydratedShape = {
+    text: assistants()[0].text,
+    tokens: assistants()[0].tokens,
+    steps: (assistants()[0].activity?.steps ?? []).map((s) => [s.kind ?? "tool", s.kind ? "" : s.id, s.status]),
+  };
+  assert.deepEqual(hydratedShape, liveShape);
 });
 
 test("Q. render-key stability: streaming thinking text does NOT change the structural key", () => {

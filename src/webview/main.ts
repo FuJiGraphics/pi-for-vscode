@@ -2,7 +2,8 @@
 // the appropriate handler, and performs the initial render.
 import { state, withSession, activateSession, dropSession, adoptPersistedView, consumeRestored } from "./state";
 import { currentSessionTitle, render, scheduleRender, bumpHighlightVersion } from "./render";
-import { addMessage, setRunning, hydrateSessionMessages, interruptCurrentTurn, recordToolOutput } from "./conversation";
+import { addMessage, setRunning, interruptCurrentTurn, recordToolOutput } from "./conversation";
+import { hydrateSessionMessages } from "./sessionHydrate";
 import { handleRpcEvent, handleExtensionUiRequest, handleStderr } from "./handlers";
 import { handleMessageClick } from "./messageActions";
 import { initHighlighter, setHighlightNotifier, setTheme } from "./highlight";
