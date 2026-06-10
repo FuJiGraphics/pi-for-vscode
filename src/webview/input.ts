@@ -57,15 +57,20 @@ export function submitInput(): void {
   if (!text && !hasImages) return;
   const now = Date.now();
   if (now < submitLockedUntil) return;
-  if (!hasImages && state.lastSentText === text && now - state.lastSentAt < 900) return;
+  // Short windows: the lock only guards the Enter+click double-fire race, and the same-text
+  // dedupe only accidental double-submits — rapid genuine sends must feel instant.
+  if (!hasImages && state.lastSentText === text && now - state.lastSentAt < 500) return;
   const images = consumePendingImageAttachments();
-  submitLockedUntil = now + 350;
+  submitLockedUntil = now + 150;
   state.lastSentText = text;
   state.lastSentAt = now;
   const idle = !state.running;
   if (idle) state.currentAssistantId = null;
   resetScrollFollowing();
-  addMessage("user", text, { attachments: images });
+  const sent = addMessage("user", text, { attachments: images });
+  // A mid-run send waits in pi's steer/follow-up queue — show it dimmed with a "Queued"
+  // chip until pi echoes its message_start (handlers → resolveOldestPending).
+  if (!idle) sent.pending = true;
   inputEl.value = "";
   autoResizeInput();
   updateInputState();

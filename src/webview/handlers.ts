@@ -4,11 +4,13 @@ import { scheduleRender } from "./render";
 import {
   addMessage,
   appendAssistant,
+  clearPendingMessages,
   ensureActivity,
   ensureAssistant,
   prettifyToolName,
   recordActivity,
   recordUsage,
+  resolveOldestPending,
   setRunning,
   summarizeArgs,
   textFromContent,
@@ -68,7 +70,11 @@ export function handleRpcEvent(event: any): void {
     case "turn_end":
       break;
     case "message_start":
-      if (event.message?.role === "user") closeExchangeBoundary();
+      if (event.message?.role === "user") {
+        // pi is consuming a queued steer/follow-up: the oldest pending bubble is now live.
+        resolveOldestPending();
+        closeExchangeBoundary();
+      }
       break;
     case "message_update": {
       if (!state.running) break;
@@ -155,8 +161,11 @@ export function handleRpcEvent(event: any): void {
       if (event.isError) ensureActivity().expanded = true;
       break;
     case "queue_update": {
+      // Queued sends render as their own dimmed user bubbles (input.ts sets `pending`);
+      // this event is only a reconciliation hook — an empty queue clears any stragglers
+      // (covers a clearQueue we'd otherwise miss, e.g. abort dropping queued messages).
       const queued = (event.steering || []).length + (event.followUp || []).length;
-      state.status = queued > 0 ? queued + " queued" : "";
+      if (queued === 0) clearPendingMessages();
       scheduleRender();
       break;
     }

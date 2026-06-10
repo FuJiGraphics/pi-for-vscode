@@ -10,6 +10,7 @@ import { cardFor, effectiveExpanded, isCardCollapsible, stepDetail, timelineRow 
 import { deriveTodos, isTodoStep, todoCardHtml } from "./cardsTodo";
 import { isTextStep, textStepRowHtml } from "./textSteps";
 import { isThinkingStep } from "./thinkingSteps";
+import { toolTheme } from "./toolTheme";
 import type { Activity, ActivityStep } from "./types";
 
 export interface TimelineRowSpec {
@@ -77,8 +78,9 @@ export function rowsForActivity(activity: Activity, highlightVersion: number): T
     rows.push({
       key: step.id,
       sig: stepSig(step) + "@" + highlightVersion,
-      html: () =>
-        withKey(
+      html: () => {
+        const theme = toolTheme(step.tool, step.kind);
+        return withKey(
           timelineRow({
             id: step.id,
             status: step.status,
@@ -93,9 +95,12 @@ export function rowsForActivity(activity: Activity, highlightVersion: number): T
             expanded: effectiveExpanded(step),
             card: cardFor(step),
             cardCollapsible: isCardCollapsible(step),
+            tone: theme.tone || undefined,
+            icon: theme.icon,
           }),
           step.id,
-        ),
+        );
+      },
     });
   });
   return rows;
@@ -135,8 +140,12 @@ export function reconcileTimeline(container: HTMLElement, rows: TimelineRowSpec[
       byKey.delete(row.key);
       if (rowSigs.get(el) !== row.sig) {
         const next = elementFromHtml(row.html());
+        // A live running→finished flip gets the one-shot completion animation; gating it
+        // here (not in CSS on .tl-done) keeps full rebuilds from replaying every dot.
+        const completed = el.classList.contains("tl-running") && !next.classList.contains("tl-running");
         // In-place rewrite: status classes live on the root, body in the children.
-        el.className = next.className;
+        el.className = next.className + (completed ? " tl-completed" : "");
+        if (next.dataset.tone) el.dataset.tone = next.dataset.tone;
         el.innerHTML = next.innerHTML;
         rowSigs.set(el, row.sig);
         touched.push(el);

@@ -22,7 +22,6 @@ function createView(): AppState {
   return {
     messages: [],
     running: false,
-    status: "",
     modelLabel: "Pi",
     sessionName: "",
     sessionFile: "",

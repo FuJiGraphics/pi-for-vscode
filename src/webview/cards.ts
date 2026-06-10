@@ -308,6 +308,10 @@ export interface TimelineRow {
   card?: string;
   /** When true the card is collapsed by default and the row toggles it (read-only tools). */
   cardCollapsible?: boolean;
+  /** Tone name (toolTheme) emitted as data-tone — chat.css maps it to --tool-accent. */
+  tone?: string;
+  /** TRUSTED inline-SVG glyph (toolTheme constants only) rendered before the label. */
+  icon?: string;
 }
 
 // The token/cost pair inside a chip uses a vertical bar so it reads like one compact metric.
@@ -344,9 +348,11 @@ export function timelineRow(row: TimelineRow): string {
   const cardHtml = row.card ? (collapsibleCard ? (row.expanded ? row.card : "") : row.card) : "";
   const cls =
     "tl-step tl-" + row.status + (row.gen ? " tl-gen" : "") + (toggleable ? " tl-expandable" : "") + (row.expanded ? " expanded" : "");
+  const toneAttr = row.tone ? ' data-tone="' + escapeHtml(row.tone) + '"' : "";
+  const iconHtml = row.icon ? '<span class="tl-icon" aria-hidden="true">' + row.icon + "</span>" : "";
   return (
-    '<div class="' + cls + '"><span class="tl-node"></span>' +
-    '<span class="tl-row"' + rowAttrs + '><span class="tl-label">' + escapeHtml(row.label) + "</span>" + detailHtml + rightHtml + chevron + "</span>" +
+    '<div class="' + cls + '"' + toneAttr + '><span class="tl-node"></span>' +
+    '<span class="tl-row"' + rowAttrs + ">" + iconHtml + '<span class="tl-label">' + escapeHtml(row.label) + "</span>" + detailHtml + rightHtml + chevron + "</span>" +
     cardHtml +
     outputHtml +
     "</div>"

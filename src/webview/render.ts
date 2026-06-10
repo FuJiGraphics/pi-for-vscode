@@ -10,7 +10,7 @@
 // This split is what keeps hover/toggle stable: the activity DOM is never rebuilt
 // at 60fps, so :hover state and click targets survive.
 import { state, save, isRenderSuppressed } from "./state";
-import { messagesEl, titleEl, thinkingControlEl, modelEl, stopEl, composerEl, sendEl, inputEl, queueIndicatorEl } from "./dom";
+import { messagesEl, titleEl, thinkingControlEl, modelEl, stopEl, composerEl, sendEl, inputEl } from "./dom";
 import { escapeHtml, formatTime, formatDuration, roleLabel } from "./util";
 import { renderMarkdown } from "./markdown";
 import { tokCost } from "./cards";
@@ -287,10 +287,13 @@ function assistantBody(message: UiMessage): string {
 function messageHtml(message: UiMessage): string {
   if (message.role === "user") {
     const meta = formatTime(message.createdAt);
+    const queued = message.pending ? '<span class="queued-chip">Queued</span>' : "";
     return (
       imageAttachmentsHtml(message) +
       staticBody(message) +
-      '<div class="meta"><span>' +
+      '<div class="meta">' +
+      queued +
+      "<span>" +
       escapeHtml(meta) +
       '</span><button data-action="copy" data-id="' +
       message.id +
@@ -326,6 +329,7 @@ function outerRenderKey(message: UiMessage): string {
     ended: activity ? !!activity.endedAt : false,
     tokens: message.tokens || 0,
     interrupted: !!message.interrupted,
+    pending: !!message.pending,
     ui: message.ui ? message.ui.kind + (message.ui.resolved ? "R" : "") : "",
     attachments: (message.attachments || []).map((attachment) => attachment.id + "|" + attachment.name).join(";"),
     text: message.role === "assistant" ? "" : message.text,
@@ -364,7 +368,7 @@ export function currentSessionTitle(): string {
 const dirtyCardScopes: HTMLElement[] = [];
 
 function updateMessageNode(node: HTMLElement, message: UiMessage): void {
-  node.className = "message " + message.role + (message.error ? " error" : "");
+  node.className = "message " + message.role + (message.error ? " error" : "") + (message.pending ? " pending" : "");
   node.dataset.id = message.id;
   const key = messageRenderKey(message);
   if (renderKeys.get(node) === key) return;
@@ -473,25 +477,6 @@ export function refreshSendButton(): void {
   sendEl.classList.toggle("empty", !state.running && empty);
 }
 
-// "N queued" pill above the composer — reassurance that rapid-fire sends were accepted and are
-// waiting their turn (Claude-style), instead of a flickering stack of per-run indicators.
-// state.status is the single source (the queue_update handler sets the count, clears on drain /
-// turn end / reset). The dataset guard avoids re-writing innerHTML on every unrelated render.
-function renderQueueIndicator(): void {
-  const status = state.status;
-  if (!status) {
-    queueIndicatorEl.hidden = true;
-    queueIndicatorEl.dataset.status = "";
-    return;
-  }
-  if (queueIndicatorEl.dataset.status !== status) {
-    queueIndicatorEl.dataset.status = status;
-    queueIndicatorEl.innerHTML =
-      '<span class="activity-working-dot" aria-hidden="true"></span><span>' + escapeHtml(status) + "</span>";
-  }
-  queueIndicatorEl.hidden = false;
-}
-
 export function render(): void {
   const title = currentSessionTitle();
   if (!titleEl.classList.contains("editing")) {
@@ -506,7 +491,6 @@ export function render(): void {
   stopEl.hidden = true;
   composerEl.classList.toggle("working", !!state.running);
   refreshSendButton();
-  renderQueueIndicator();
 
   const followLatest = shouldFollowLatest();
 

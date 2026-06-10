@@ -41,10 +41,11 @@ const ev = {
   autoRetryEnd: () => ({ type: "auto_retry_end", success: true }),
   compactionStart: () => ({ type: "compaction_start", reason: "overflow" }),
   compactionEnd: () => ({ type: "compaction_end" }),
+  // pi sends the queued texts as plain string arrays (post skill/template expansion).
   queueUpdate: (followUp: number, steering = 0) => ({
     type: "queue_update",
-    followUp: Array.from({ length: followUp }, (_, i) => ({ role: "user", content: "f" + i })),
-    steering: Array.from({ length: steering }, (_, i) => ({ role: "user", content: "s" + i })),
+    followUp: Array.from({ length: followUp }, (_, i) => "f" + i),
+    steering: Array.from({ length: steering }, (_, i) => "s" + i),
   }),
 };
 
@@ -454,14 +455,33 @@ test("U. Stop mid-narration does NOT demote: the partial bubble text survives as
   assert.equal((a.activity?.steps ?? []).filter(isTextStep).length, 0);
 });
 
-test("K. queue_update drives the queued-sends count (steering + followUp) and clears on drain", () => {
+test("K. pending lifecycle: mid-run sends queue as dimmed bubbles, drain in FIFO order, and clear on turn end", () => {
   fresh();
   sendUser("u1");
-  replay([ev.agentStart(), ev.userStart("u1")]);
-  replay([ev.queueUpdate(2, 1)]); // 2 follow-ups + 1 steering still waiting
-  assert.equal(state.status, "3 queued");
-  replay([ev.queueUpdate(1)]);
-  assert.equal(state.status, "1 queued");
-  replay([ev.queueUpdate(0)]); // drained → pill hides
-  assert.equal(state.status, "");
+  replay([ev.agentStart(), ev.userStart("u1"), ev.delta("working on it")]);
+  // Two rapid mid-run sends — both render immediately as pending user bubbles.
+  sendUser("also do A");
+  state.messages[state.messages.length - 1].pending = true; // input.ts sets this on mid-run sends
+  sendUser("and B");
+  state.messages[state.messages.length - 1].pending = true;
+  const pendings = () => state.messages.filter((m) => m.role === "user" && m.pending).map((m) => m.text);
+  assert.deepEqual(pendings(), ["also do A", "and B"]);
+
+  // pi consumes the first queued message → the OLDEST pending bubble resolves (FIFO).
+  replay([ev.userStart("also do A (expanded by a /skill — text may differ)")]);
+  assert.deepEqual(pendings(), ["and B"]);
+
+  // An empty queue_update reconciles stragglers (e.g. abort cleared pi's queue).
+  replay([ev.queueUpdate(0)]);
+  assert.deepEqual(pendings(), []);
+});
+
+test("K2. turn end clears any still-pending flags (pi dropped its queue on abort)", () => {
+  fresh();
+  sendUser("u1");
+  replay([ev.agentStart(), ev.userStart("u1"), ev.delta("hm")]);
+  sendUser("queued one");
+  state.messages[state.messages.length - 1].pending = true;
+  setRunning(false); // Stop / agent_end
+  assert.equal(state.messages.some((m) => m.pending), false);
 });

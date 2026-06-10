@@ -23,6 +23,13 @@
   --warning: #ffff00;
   --link: #81a2be;
   --heading: #f0c674;
+  /* per-tool timeline tones (Tomorrow Night family — matches pi's signature palette) */
+  --tone-read: #81a2be;
+  --tone-bash: #b5bd68;
+  --tone-edit: #f0c674;
+  --tone-search: #b294bb;
+  --tone-web: #8abeb7;
+  --tone-todo: #de935f;
   /* thinking-depth border colors (pi signature) */
   --think-off: #505050;
   --think-minimal: #6e6e6e;
@@ -561,14 +568,37 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   box-shadow: 0 0 0 1.5px var(--dim);
   z-index: 1;
 }
-.tl-done .tl-node { background: var(--accent); box-shadow: 0 0 0 1.5px var(--accent); }
+/* Per-tool tone: dot ring, icon, and accents pick up --tool-accent (default: accent). */
+.tl-step[data-tone="read"] { --tool-accent: var(--tone-read); }
+.tl-step[data-tone="bash"] { --tool-accent: var(--tone-bash); }
+.tl-step[data-tone="edit"] { --tool-accent: var(--tone-edit); }
+.tl-step[data-tone="search"] { --tool-accent: var(--tone-search); }
+.tl-step[data-tone="web"] { --tool-accent: var(--tone-web); }
+.tl-step[data-tone="todo"] { --tool-accent: var(--tone-todo); }
+.tl-step[data-tone="think"] { --tool-accent: var(--muted); }
+.tl-step[data-tone="gen"] { --tool-accent: var(--accent); }
+.tl-done .tl-node { background: var(--tool-accent, var(--accent)); box-shadow: 0 0 0 1.5px var(--tool-accent, var(--accent)); }
 .tl-error .tl-node { background: var(--error); box-shadow: 0 0 0 1.5px var(--error); }
 .tl-running .tl-node {
-  background: var(--accent);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 42%, transparent);
+  background: var(--tool-accent, var(--accent));
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--tool-accent, var(--accent)) 42%, transparent);
   animation: live-dot 1.5s infinite;
 }
+.tl-icon {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  color: var(--tool-accent, var(--muted));
+  transform: translateY(1px);
+}
+.tl-icon svg { display: block; }
 .tl-label { flex: none; color: var(--fg); font-weight: 600; }
+/* Row entry: only LIVE insertions carry .tl-new (set by the reconciler) — full rebuilds
+   never replay the cascade. The row fades/slides in while its rail segment draws down. */
+.tl-step.tl-new { animation: tl-enter 260ms cubic-bezier(.2, .8, .3, 1); }
+.tl-step.tl-new::before { animation: tl-rail 320ms cubic-bezier(.2, .8, .3, 1); transform-origin: top; }
+/* One-shot completion pop on a live running→done flip (gated by the reconciler). */
+.tl-step.tl-completed .tl-node { animation: tl-pop 420ms ease-out; }
 .tl-detail {
   flex: 1 1 auto;
   min-width: 0;
@@ -1285,17 +1315,14 @@ a:hover { text-decoration: underline; }
 }
 /* "N queued" pill above the composer: rapid-fire sends accepted and waiting their turn. The dot
    reuses .activity-working-dot's pulse so it reads as live, not a static badge. */
-.queue-indicator {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: fit-content;
-  margin: 0 4px 7px;
-  padding: 3px 11px;
+/* Mid-run sends waiting in pi's steer/follow-up queue: dimmed until pi consumes them. */
+.message.user.pending .bubble { opacity: .62; }
+.queued-chip {
+  padding: 1px 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--muted);
-  font-size: var(--fs-meta);
+  font-size: var(--fs-micro, var(--fs-meta));
   font-weight: 600;
 }
 .composer {
@@ -1498,9 +1525,22 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes live-dot {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 42%, transparent); }
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tool-accent, var(--accent)) 42%, transparent); }
   70% { box-shadow: 0 0 0 8px transparent; }
   100% { box-shadow: 0 0 0 0 transparent; }
+}
+@keyframes tl-enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes tl-rail {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+@keyframes tl-pop {
+  0% { transform: scale(1); }
+  55% { transform: scale(1.45); box-shadow: 0 0 0 1.5px var(--tool-accent, var(--accent)), 0 0 0 5px color-mix(in srgb, var(--tool-accent, var(--accent)) 22%, transparent); }
+  100% { transform: scale(1); }
 }
 @keyframes beam-spin {
   from { --beam-angle: 130deg; }

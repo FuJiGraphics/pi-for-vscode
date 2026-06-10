@@ -275,7 +275,6 @@ function handleReset(): void {
   state.running = false;
   state.sessionName = "";
   state.sessionFile = "";
-  state.status = "";
   state.thinkingLevel = "";
   state.thinkingLevels = [];
   resetScrollFollowing();

@@ -57,7 +57,6 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
     </section>
     <div id="extension-ui-root" class="extension-ui-root" aria-live="polite"></div>
     <footer class="composer-wrap">
-      <div id="queue-indicator" class="queue-indicator" role="status" aria-live="polite" hidden></div>
       <div id="composer" class="composer">
         <div id="attachmentTray" class="attachment-tray" hidden></div>
         <button id="contextChip" class="context-chip" type="button" hidden></button>

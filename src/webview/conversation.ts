@@ -211,11 +211,23 @@ export function appendAssistant(delta: string): void {
   scheduleRender();
 }
 
-function idleStatus(): string {
-  // The status line is reserved for transient, meaningful state (e.g. queued
-  // follow-ups). It is NOT used for a "Pi is working" label — the thinking/activity
-  // indicator already conveys that — so when idle it stays empty and render() hides it.
-  return "";
+/** Clear queued flags — the run ended or pi reported an empty queue, so no user bubble
+ *  is "waiting" anymore (pi drops its queue on abort; we keep the bubbles, not the claim). */
+export function clearPendingMessages(): void {
+  for (const message of state.messages) {
+    if (message.pending) message.pending = false;
+  }
+}
+
+/** pi echoed a queued user message (message_start{user}) — un-queue the OLDEST pending
+ *  bubble. FIFO matches pi's drain order; text can't be trusted as the key because pi
+ *  queues the EXPANDED text for /command prompts. */
+export function resolveOldestPending(): void {
+  const message = state.messages.find((m) => m.role === "user" && m.pending);
+  if (message) {
+    message.pending = false;
+    scheduleRender();
+  }
 }
 
 export function setRunning(value: boolean): void {
@@ -225,20 +237,17 @@ export function setRunning(value: boolean): void {
     // finalize the current bubble so a half-typed turn settles.
     if (!next && state.currentAssistantId) {
       finalizeOrPrune();
-      state.status = idleStatus();
+      clearPendingMessages();
     }
     scheduleRender();
     return;
   }
   state.running = next;
   if (next) {
-    // No "Pi is working" label — the thinking/activity indicator conveys it. Leave the
-    // status line empty unless a real status (e.g. queued follow-ups) is posted.
-    state.status = "";
     ensureActivity();
     ensureAnimating();
   } else {
-    state.status = idleStatus();
+    clearPendingMessages();
     // Finalize the bubble; an empty one is pruned. A content-bearing bubble KEEPS its id so a
     // retry/compaction continuation (a fresh agent_start with no user message between) reuses
     // it. The id is cleared instead by a new prompt (submitInput) or a follow-up boundary.

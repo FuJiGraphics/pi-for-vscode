@@ -85,7 +85,6 @@ export interface UiMessage {
 export interface AppState {
   messages: UiMessage[];
   running: boolean;
-  status: string;
   modelLabel: string;
   sessionName: string;
   sessionFile: string;
