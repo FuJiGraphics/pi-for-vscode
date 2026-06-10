@@ -324,6 +324,16 @@ export function tokCost(tokens: number, cost?: number): string {
   return tokenLabel(tokens) + (formattedCost ? METRIC_SEP + formattedCost : "");
 }
 
+/** Hover breakdown for a usage chip — zero segments omitted. */
+export function usageTitle(usage: { input: number; output: number; cacheRead: number; cacheWrite: number }): string {
+  const parts: string[] = [];
+  if (usage.input) parts.push("Input " + formatTokens(usage.input));
+  if (usage.output) parts.push("Output " + formatTokens(usage.output));
+  if (usage.cacheRead) parts.push("Cache read " + formatTokens(usage.cacheRead));
+  if (usage.cacheWrite) parts.push("Cache write " + formatTokens(usage.cacheWrite));
+  return parts.join(" · ");
+}
+
 export function timelineRow(row: TimelineRow): string {
   const detailHtml = row.detail ? '<span class="tl-detail">' + escapeHtml(shortenDetail(row.detail)) + "</span>" : "";
   let rightHtml = "";

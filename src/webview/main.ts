@@ -261,6 +261,7 @@ function handleReset(): void {
   state.running = false;
   state.sessionName = "";
   state.sessionFile = "";
+  state.stats = undefined;
   state.thinkingLevel = "";
   state.thinkingLevels = [];
   resetScrollFollowing();
@@ -286,6 +287,9 @@ const inbound: InboundTable = {
       resetContextInclude();
       resetScrollFollowing();
       scheduleRender();
+      // Pull this session's authoritative usage/cost/context stats (webview-pull keeps
+      // SessionRuntimeManager untouched; every seed path ends in this activate).
+      post({ type: "requestSessionStats" });
     }
   },
   dropSession: (m) => dropSession(m.sessionId),
@@ -304,6 +308,10 @@ const inbound: InboundTable = {
     setAuthAvailable(m.authAvailable);
   },
   modelList: (m) => renderModelList(m.models),
+  sessionStats: (m) => withSession(m.sessionId, () => {
+    state.stats = m.stats;
+    scheduleRender();
+  }),
   theme: (m) => setTheme(m.theme, m.kind),
   editorContext: (m) => updateEditorContext({ path: m.path, startLine: m.startLine, endLine: m.endLine }),
 };

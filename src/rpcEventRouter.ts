@@ -1,5 +1,6 @@
 import type { PiRpcMessage } from "./protocol";
 import type { SessionRuntime } from "./sessionRuntime";
+import type { SessionStatsService } from "./sessionStatsService";
 import type { WebviewPresenter } from "./webviewPresenter";
 import { readToolResult } from "./sessionStore";
 import { truncateToolOutput } from "./stateHelpers";
@@ -19,7 +20,10 @@ export interface RpcEventSink {
 export class RpcEventRouter {
   private sink!: RpcEventSink;
 
-  constructor(private readonly presenter: WebviewPresenter) {}
+  constructor(
+    private readonly presenter: WebviewPresenter,
+    private readonly stats: SessionStatsService,
+  ) {}
 
   bind(sink: RpcEventSink): void {
     this.sink = sink;
@@ -41,7 +45,13 @@ export class RpcEventRouter {
         if (isActive) void this.sink.postState();
         else this.sink.onBackgroundRuntimeFinished(rt);
         void this.sink.postSessionList();
+        // Authoritative usage/cost/context after the run settles — once per run, also for
+        // background runtimes (the tagged post lands in their cached view).
+        void this.stats.postStats(rt);
       }
+    } else if (event.type === "compaction_end") {
+      // Context usage drops sharply after a compaction — refresh the bar immediately.
+      void this.stats.postStats(rt);
     } else if (event.type === "thinking_level_changed") {
       if (isActive) void this.sink.postState();
     } else if (event.type === "session_info_changed") {

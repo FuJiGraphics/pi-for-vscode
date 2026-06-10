@@ -108,17 +108,30 @@ export function summarizeArgs(args: unknown): string {
 // No-op when usage is absent.
 export function recordUsage(usage: unknown): void {
   if (!usage || typeof usage !== "object") return;
-  const u = usage as { totalTokens?: unknown; cost?: { total?: unknown } };
-  const tokens = typeof u.totalTokens === "number" && Number.isFinite(u.totalTokens) ? u.totalTokens : 0;
-  const cost = u.cost && typeof u.cost.total === "number" && Number.isFinite(u.cost.total) ? u.cost.total : 0;
+  const u = usage as { totalTokens?: unknown; input?: unknown; output?: unknown; cacheRead?: unknown; cacheWrite?: unknown; cost?: { total?: unknown } };
+  const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const tokens = n(u.totalTokens);
+  const cost = n(u.cost?.total);
   if (!tokens && !cost) return;
   state.sessionTokens += tokens;
   state.sessionCost += cost;
+  // Mid-turn liveliness for the stats bar: bump the authoritative stats optimistically with
+  // the same numbers pi will sum; the agent_end push replaces the object wholesale.
+  if (state.stats) {
+    state.stats.tokens.total += tokens;
+    state.stats.cost += cost;
+  }
   const message = state.currentAssistantId ? getMessage(state.currentAssistantId) : undefined;
   if (message) {
-    // Turn total (shown on the collapsed activity header).
+    // Turn total (shown on the collapsed activity header) + breakdown for the tooltip.
     message.tokens = (message.tokens || 0) + tokens;
     message.cost = (message.cost || 0) + cost;
+    const breakdown = message.usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    breakdown.input += n(u.input);
+    breakdown.output += n(u.output);
+    breakdown.cacheRead += n(u.cacheRead);
+    breakdown.cacheWrite += n(u.cacheWrite);
+    message.usage = breakdown;
     // Per-generation checkpoint in the expanded timeline.
     const activity = ensureActivity();
     const now = Date.now();

@@ -14,7 +14,8 @@ import { messagesEl, titleEl, modelEl, stopEl, composerEl, sendEl, inputEl } fro
 import { renderThinkingControl } from "./thinkingControl";
 import { escapeHtml, formatTime, formatDuration, roleLabel } from "./util";
 import { renderMarkdown } from "./markdown";
-import { tokCost } from "./cards";
+import { tokCost, usageTitle } from "./cards";
+import { renderSessionStats } from "./sessionStatsBar";
 import { reconcileTimeline, rowsForActivity, stepSig, timelineRowsHtml } from "./timeline";
 import { isThinkingStep, lastRunningThinkingStep, liveThinkingTail } from "./thinkingSteps";
 import { statusTaskText } from "./statusLine";
@@ -123,7 +124,14 @@ function statusHeaderInner(message: UiMessage, mode: "spinner" | "working" | "do
   }
   // Join the present fragments with one middot rather than baking a leading " · " into each.
   // statusTaskText falls back to "N steps" when nothing is actively running (always, in done mode).
-  return dot + "<span>" + escapeHtml([label, statusTaskText(message), usageChip(message)].filter(Boolean).join(SEP)) + "</span>";
+  const chip = usageChip(message);
+  const chipHtml = chip
+    ? escapeHtml(SEP) +
+      '<span class="usage-chip"' +
+      (message.usage ? ' title="' + escapeHtml(usageTitle(message.usage)) + '"' : "") +
+      ">" + escapeHtml(chip) + "</span>"
+    : "";
+  return dot + "<span>" + escapeHtml([label, statusTaskText(message)].filter(Boolean).join(SEP)) + chipHtml + "</span>";
 }
 
 function statusBlock(message: UiMessage, mode: "spinner" | "working" | "done", expanded: boolean): string {
@@ -436,6 +444,7 @@ export function render(): void {
   // (No status subtitle under the title — removed. Run state shows in the activity
   // timeline; "Interrupted" is rendered inline below the cut-off turn, not as a banner.)
   renderThinkingControl();
+  renderSessionStats();
   modelEl.textContent = (state.modelLabel || "Pi") + "⌄";
   stopEl.disabled = true;
   stopEl.hidden = true;

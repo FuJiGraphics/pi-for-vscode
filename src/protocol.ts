@@ -166,6 +166,17 @@ export interface ModelListItem {
   vision?: boolean;
 }
 
+/** Pi's `get_session_stats`, mapped 1:1 (pi computes cost and the compaction-aware context
+ *  estimate — the webview only renders). `context.tokens`/`percent` are null right after a
+ *  compaction (unknown until the next assistant response); the whole `context` field is
+ *  omitted when pi reports none (no model / zero contextWindow / older pi). */
+export interface SessionStats {
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+  /** Total session cost in USD. */
+  cost: number;
+  context?: { tokens: number | null; contextWindow: number; percent: number | null };
+}
+
 /** A slash command Pi exposes via the `get_commands` RPC (skill / prompt-template / extension). */
 export interface CommandListItem {
   /** Text inserted after the slash, e.g. "review" or "skill:foo" (no leading slash). */
@@ -216,6 +227,9 @@ export type WebviewToExtensionMessage =
   // disconnected banner's Retry button.
   | { type: "wake" }
   | { type: "reconnect" }
+  // Pull the authoritative session usage/cost/context stats (sent on activate; the host
+  // also pushes after agent_end and compaction_end).
+  | { type: "requestSessionStats" }
   | { type: "extensionUiResponse"; response: unknown };
 
 // Per-session messages carry `sessionId` (the host runtime id) so the webview can keep a
@@ -240,6 +254,8 @@ export type ExtensionToWebviewMessage =
   | { type: "dropSession"; sessionId: string }
   | { type: "sessionList"; sessions: SessionListItem[] }
   | { type: "modelList"; models: ModelListItem[] }
+  // Authoritative cumulative usage/cost/context for one session (pi's get_session_stats).
+  | { type: "sessionStats"; sessionId: string; stats: SessionStats }
   // `authAvailable` reflects whether the bundled auth bridge registered its login command in
   // this pi runtime (derived from get_commands). Omitted when unknown (e.g. RPC failure) —
   // the webview then keeps the optimistic default.

@@ -1,7 +1,15 @@
 // UI-side data shapes for the chat webview. These describe how messages and
 // activity are held in the webview's local state, independent of the pi RPC
 // wire format (which arrives as loosely-typed PiRpcMessage events).
-import type { ImageAttachment } from "../protocol";
+import type { ImageAttachment, SessionStats } from "../protocol";
+
+/** Per-call token breakdown (from pi's message.usage) for the usage tooltips. */
+export interface UsageBreakdown {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
 
 export type UiRole = "user" | "assistant" | "system" | "tool";
 
@@ -74,6 +82,8 @@ export interface UiMessage {
   tokens?: number;
   /** Cost in USD for this turn, summed across its API calls. */
   cost?: number;
+  /** Input/output/cache breakdown summed across the turn's API calls (usage tooltip). */
+  usage?: UsageBreakdown;
   /** This turn was cut off (user pressed Stop, or VS Code closed mid-turn) — renders an
    *  inline "Interrupted" marker below the turn. */
   interrupted?: boolean;
@@ -97,6 +107,10 @@ export interface AppState {
   sessionTokens: number;
   /** Cumulative cost in USD for the visible session. */
   sessionCost: number;
+  /** Authoritative session stats from pi's get_session_stats (tokens/cost/context %).
+   *  recordUsage bumps tokens/cost optimistically mid-turn; the agent_end push replaces
+   *  the whole object, self-correcting any drift. */
+  stats?: SessionStats;
   /** This session was mid-turn when VS Code last closed — shows an "interrupted" notice
    *  until the user continues. Set on restore from persisted state; cleared on next turn. */
   interrupted?: boolean;

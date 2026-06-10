@@ -3,6 +3,7 @@ import { repairBundledPi } from "./piResolver";
 import { BundledExtensionResolver } from "./bundledExtensionResolver";
 import { WebviewPresenter } from "./webviewPresenter";
 import { RpcEventRouter } from "./rpcEventRouter";
+import { SessionStatsService } from "./sessionStatsService";
 import { CommandPaletteService } from "./commandPaletteService";
 import { ModelService } from "./modelService";
 import { SessionRuntimeManager } from "./sessionRuntimeManager";
@@ -21,7 +22,8 @@ const SUPPORTED_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gi
 
 export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   private readonly presenter = new WebviewPresenter();
-  private readonly events = new RpcEventRouter(this.presenter);
+  private readonly stats = new SessionStatsService(this.presenter);
+  private readonly events = new RpcEventRouter(this.presenter, this.stats);
   private readonly bundled: BundledExtensionResolver;
   private readonly manager: SessionRuntimeManager;
   private readonly models: ModelService;
@@ -175,6 +177,9 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
           return;
         case "requestModels":
           await this.models.postModelList();
+          return;
+        case "requestSessionStats":
+          await this.stats.postStats(this.manager.active);
           return;
         case "requestCommands":
           await this.commandPalette.postCommandList();

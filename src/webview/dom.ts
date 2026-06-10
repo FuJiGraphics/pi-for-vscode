@@ -28,6 +28,7 @@ export const stopEl = byId<HTMLButtonElement>("stop");
 export const historyBtnEl = byId<HTMLButtonElement>("history");
 export const newSessionEl = byId<HTMLButtonElement>("newSession");
 export const composerWrapEl = bySelector<HTMLElement>(".composer-wrap");
+export const sessionStatsEl = byId<HTMLElement>("sessionStats");
 export const composerEl = byId<HTMLElement>("composer");
 export const thinkingControlEl = byId<HTMLButtonElement>("thinkingControl");
 export const thinkingPanelEl = byId<HTMLElement>("thinking-panel");

@@ -1325,6 +1325,27 @@ a:hover { text-decoration: underline; }
 }
 /* "N queued" pill above the composer: rapid-fire sends accepted and waiting their turn. The dot
    reuses .activity-working-dot's pulse so it reads as live, not a static badge. */
+/* Session usage strip above the composer: tokens · cost left, context bar right. */
+.session-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 5px;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+.stats-context { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.ctx-bar {
+  width: 56px;
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.ctx-fill { height: 100%; border-radius: 999px; background: var(--accent); }
+.stats-context.high .ctx-fill { background: var(--error); }
+
 /* Mid-run sends waiting in pi's steer/follow-up queue: dimmed until pi consumes them. */
 .message.user.pending .bubble { opacity: .62; }
 .queued-chip {
