@@ -47,6 +47,27 @@ test("editDiffHtml (hybrid): pi's real diff wins, with TRUE line numbers in the 
   assert.match(html, /added<\/span>/);
 });
 
+test("edit/write cards carry an open-in-editor control targeting the first changed line", () => {
+  const edit = step({
+    tool: "edit",
+    input: { path: "src/a/b.ts", edits: [{ oldText: "x", newText: "y" }] },
+    output: { text: "ok", isError: false, diff: "+93 added", firstChangedLine: 93 },
+  });
+  const editHtml = editDiffHtml(edit);
+  assert.match(editHtml, /data-action="open-file"/);
+  assert.match(editHtml, /data-path="src\/a\/b\.ts"/);
+  assert.match(editHtml, /data-line="93"/);
+  // Before enrichment (synthetic diff): button present, no line yet.
+  const pending = editDiffHtml(step({ tool: "edit", input: { path: "x.ts", edits: [{ oldText: "a", newText: "b" }] } }));
+  assert.match(pending, /data-action="open-file"/);
+  assert.ok(!pending.includes("data-line"));
+  const writeHtml = writePreviewHtml(step({ tool: "write", input: { path: "new.ts", content: "hello" } }));
+  assert.match(writeHtml, /data-action="open-file"/);
+  assert.match(writeHtml, /data-path="new\.ts"/);
+  // A pathless step renders no open control.
+  assert.ok(!editDiffHtml(step({ tool: "edit", input: { edits: [{ oldText: "a", newText: "b" }] } })).includes("open-file"));
+});
+
 test("cardFor routes via the registry (edit→diff, write→preview; read needs output)", () => {
   assert.match(cardFor(step({ tool: "edit", input: { edits: [{ oldText: "a", newText: "b" }] } })), /tl-diff/);
   assert.match(cardFor(step({ tool: "write", input: { content: "line1\nline2" } })), /tl-write/);

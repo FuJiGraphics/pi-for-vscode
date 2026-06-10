@@ -140,6 +140,20 @@ function expandButton(stepId: string | undefined): string {
   );
 }
 
+// Hover-revealed control that jumps to the touched file in the editor — Edit lands on the
+// first changed line (the enriched output.firstChangedLine), Write/Read on the file top.
+// Reuses the existing open-file action (messageActions → host fileOpener), so no new wiring.
+function openInEditorButton(path: unknown, line?: number): string {
+  if (typeof path !== "string" || !path) return "";
+  return (
+    '<button class="tl-expand tl-open" data-action="open-file" data-path="' +
+    escapeHtml(path) +
+    '"' +
+    (typeof line === "number" && line > 0 ? ' data-line="' + line + '"' : "") +
+    ' title="Open in editor" aria-label="Open in editor">↗</button>'
+  );
+}
+
 // Parse pi's real edit diff (details.diff): lines are "<sign><lineNo> <content>", sign one of
 // space/+/-. Non-matching lines render as neutral context with no number.
 function parsePiDiff(diff: string): Array<{ lineNo: string; sign: " " | "+" | "-"; content: string }> {
@@ -161,6 +175,7 @@ export function editDiffHtml(step: ActivityStep): string {
   // Per-line (not whole-block) because pi's diff lines are non-contiguous old/new versions.
   const lang = langForPath(step.input?.path);
   const cell = (line: string): string => highlightToLines(line, lang)?.[0] ?? escapeHtml(line);
+  const openButton = openInEditorButton(step.input?.path, step.output?.firstChangedLine);
   const realDiff = step.output?.diff;
   if (realDiff) {
     const parsed = parsePiDiff(realDiff);
@@ -168,7 +183,7 @@ export function editDiffHtml(step: ActivityStep): string {
       .slice(0, DIFF_MAX)
       .map((r) => gutterRow(r.lineNo, r.sign, cell(r.content), r.sign === "+" ? "add" : r.sign === "-" ? "del" : "ctx"));
     if (parsed.length > DIFF_MAX) rows.push(moreRow(parsed.length - DIFF_MAX));
-    return '<div class="tl-card tl-diff">' + expandButton(step.id) + rows.join("") + "</div>";
+    return '<div class="tl-card tl-diff">' + expandButton(step.id) + openButton + rows.join("") + "</div>";
   }
 
   const edits = normalizeEdits(step.input || {});
@@ -191,14 +206,14 @@ export function editDiffHtml(step: ActivityStep): string {
     if (edit.newText) push(edit.newText, "+", "add");
   }
   if (extra) rows.push(moreRow(extra));
-  return '<div class="tl-card tl-diff">' + expandButton(step.id) + rows.join("") + "</div>";
+  return '<div class="tl-card tl-diff">' + expandButton(step.id) + openButton + rows.join("") + "</div>";
 }
 
 // A line-numbered code block card (capped): file content with a gutter starting at `startLine`.
 // Shared by Write (new file, 1..N) and Read (offset..offset+N). The whole block is tokenized
 // once via Shiki (per-line HTML); when highlighting is unavailable the line falls back to
 // escaped plaintext. `lang` is a Shiki language id ("" → plaintext).
-function numberedCodeCard(cssClass: string, content: string, startLine: number, max: number, lang: string, stepId: string | undefined): string {
+function numberedCodeCard(cssClass: string, content: string, startLine: number, max: number, lang: string, stepId: string | undefined, controls = ""): string {
   if (!content) return "";
   const lines = content.split("\n");
   const highlighted = highlightToLines(content, lang);
@@ -206,13 +221,13 @@ function numberedCodeCard(cssClass: string, content: string, startLine: number, 
     .slice(0, max)
     .map((line, i) => gutterRow(String(startLine + i), " ", highlighted?.[i] ?? escapeHtml(line), "code"));
   const more = lines.length > max ? moreRow(lines.length - max) : "";
-  return '<div class="tl-card ' + cssClass + '">' + expandButton(stepId) + rows.join("") + more + "</div>";
+  return '<div class="tl-card ' + cssClass + '">' + expandButton(stepId) + controls + rows.join("") + more + "</div>";
 }
 
 // Write card: the file content being written, line-numbered 1..N (a new file's real lines).
 export function writePreviewHtml(step: ActivityStep): string {
   const content = typeof step.input?.content === "string" ? (step.input.content as string) : "";
-  return numberedCodeCard("tl-write", content, 1, WRITE_MAX, langForPath(step.input?.path), step.id);
+  return numberedCodeCard("tl-write", content, 1, WRITE_MAX, langForPath(step.input?.path), step.id, openInEditorButton(step.input?.path));
 }
 
 // Read card: the fetched content with REAL line numbers from the 1-based `offset` arg. Only

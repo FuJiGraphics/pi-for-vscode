@@ -677,6 +677,8 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .tl-card:hover .tl-expand,
 .tl-expand:focus-visible { opacity: 1; }
 .tl-expand:hover { color: var(--fg); background: var(--surface-hover); }
+/* Second hover control on Edit/Write cards: jump to the file (first changed line). */
+.tl-expand.tl-open { right: 33px; }
 
 /* Full-panel card overlay (the ⤢ target): large, scrollable, highlighting + line numbers kept. */
 .card-overlay {
