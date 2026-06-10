@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Show provider "Usage remaining" (Codex-style): a new usage bridge subscribes to pi's `after_provider_response` extension event and forwards rate-limit headers (Anthropic subscription 5h/weekly windows, API request/token limits, OpenAI x-ratelimit) into the stats popover — shown only when the provider sends them.
+- Bottom status strip below the composer: the active-file reference chip on the left, and on the right the session tokens · cost with a circular context gauge ("61% left", warning tone past 80%). Hovering opens a detailed popover (context breakdown, input/output/cache split, estimated API cost, usage remaining).
+- Redesigned Settings panel: header with close button, card sections with icons, per-provider rows with credential glyphs, destructive hover for sign-out, full-width sign-in button.
+
 - Interleave assistant narration chronologically in the activity timeline (Claude Code-style flow): intermediate text now lands between the tool steps it precedes, and the final answer stays in the bubble. This also fixes intermediate narration being overwritten on multi-call turns.
 - Show EVERY timeline step — the 16-step cap is gone. A keyed row reconciler updates only changed rows, so long turns stay smooth and hover/animations survive streaming.
 - Restore sessions with full fidelity: reopened sessions now rebuild tool steps (with outputs and diffs), narration, thinking blocks, and per-turn usage — structurally identical to the live view.
