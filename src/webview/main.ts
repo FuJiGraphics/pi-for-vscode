@@ -15,7 +15,7 @@ import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker }
 import { setAboutInfo, setAuthState, setAuthAvailable } from "./authState";
 import { initOnboarding, onboardingConnectionChange } from "./onboarding";
 import { closeSettings, initSettings } from "./settingsPanel";
-import { initUsageMenu } from "./usageMenu";
+import { initUsageBars } from "./usageBars";
 import { acceptActive, closeCommandMenu, initCommandMenu, invalidateCommands, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
 import { initContextChip, resetContextInclude, updateEditorContext } from "./contextChip";
 import { initThinkingControl, supportedThinkingLevels } from "./thinkingControl";
@@ -340,7 +340,7 @@ initThinkingControl();
 initContextChip();
 initOnboarding();
 initSettings();
-initUsageMenu();
+initUsageBars();
 initImageAttachments(() => {
   autoResizeInput();
   updateInputState();

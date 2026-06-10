@@ -17,7 +17,6 @@ export function openModelPicker(): void {
   appEl.classList.remove("command-open");
   appEl.classList.remove("thinking-open");
   appEl.classList.remove("settings-open");
-  appEl.classList.remove("usage-open");
   appEl.classList.add("model-open");
   modelSearchEl.value = "";
   if (allModels.length > 0) {

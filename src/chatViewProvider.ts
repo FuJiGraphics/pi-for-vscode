@@ -138,6 +138,7 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
         case "ready": {
           this.postTheme();
           this.contextTracker?.post();
+          this.presenter.repostUsage();
           const rt = await this.manager.ensureActiveRuntime();
           const webviewSessionFile = message.sessionFile;
           // Resume the session the user was last viewing (Claude-style resume-from-disk):

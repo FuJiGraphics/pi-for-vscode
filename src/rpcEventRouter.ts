@@ -62,11 +62,18 @@ export class RpcEventRouter {
     }
 
     if (event.type === "extension_ui_request") {
-      if (isActive) {
+      const { method, statusKey } = event as { method?: string; statusKey?: string };
+      if (method === "setStatus" && statusKey === "vscode-usage") {
+        // Account-global usage data from the usage bridge — relevant whichever runtime's
+        // provider call produced it, so it bypasses the active gate.
+        this.presenter.postUsage({ type: "extensionUiRequest", request: event });
+      } else if (isActive) {
         this.presenter.post({ type: "extensionUiRequest", request: event });
-      } else {
+      } else if (method === "select" || method === "input" || method === "editor" || method === "confirm") {
         // A background pi is blocked waiting for human input it can't show. Buffer it (one
         // slot — pi blocks one at a time); we never auto-answer. It replays on activate.
+        // Only response-awaiting dialogs qualify — fire-and-forget methods (setStatus,
+        // setWidget, notify) must never overwrite a buffered dialog.
         rt.pendingUiRequest = event;
         void this.sink.postSessionList();
       }

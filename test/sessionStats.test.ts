@@ -60,26 +60,22 @@ test("SessionStatsService posts tagged stats; RPC failure posts nothing", async 
   assert.equal(posts.length, 1);
 });
 
-test("statsPopoverHtml: context bar, token split, Est. cost label, and usage-remaining rows", () => {
+test("statsPopoverHtml: context-only card with big remaining percent", () => {
   const stats = sessionStatsFromRpc(V078_PAYLOAD)!;
-  const html = statsPopoverHtml(stats, [{ label: "5h limit", value: "1% used · resets 11:24 PM" }]);
+  const html = statsPopoverHtml(stats);
   assert.ok(html.includes(">Context<"));
   assert.ok(html.includes("78k of 200k tokens")); // formatTokens drops decimals ≥10k
-  assert.ok(html.includes("61% left"));
-  assert.ok(html.includes('style="width:39%"')); // mini bar
-  assert.ok(html.includes(">Session<"));
-  assert.ok(html.includes("Cache read"));
-  assert.ok(html.includes("Est. API cost")); // honest label — pi converts via price table
-  assert.ok(html.includes(">Usage remaining<"));
-  assert.ok(html.includes("5h limit"));
+  assert.ok(html.includes('61%<span> left</span>'));
+  assert.ok(html.includes('style="width:39%"')); // used-context mini bar
+  assert.ok(html.includes(">Used<"));
+  assert.equal(html.includes(">Session<"), false);
+  assert.equal(html.includes("Cache read"), false);
+  assert.equal(html.includes("Est. API cost"), false);
+  assert.equal(html.includes(">Usage remaining<"), false);
 
-  // No usage data → section omitted entirely.
-  const noUsage = statsPopoverHtml(stats, []);
-  assert.equal(noUsage.includes("Usage remaining"), false);
-  // Post-compaction (percent null) → no Context section, Session still renders.
-  const postCompaction = statsPopoverHtml({ ...stats, context: { tokens: null, contextWindow: 200_000, percent: null } }, []);
-  assert.equal(postCompaction.includes(">Context<"), false);
-  assert.ok(postCompaction.includes(">Session<"));
+  // Post-compaction (percent null) → context is unknown, so the popover is omitted.
+  const postCompaction = statsPopoverHtml({ ...stats, context: { tokens: null, contextWindow: 200_000, percent: null } });
+  assert.equal(postCompaction, "");
 });
 
 test("statsSummary and contextLabel format Claude-style", () => {

@@ -1,20 +1,14 @@
-// Webview store + formatters for provider usage data pushed by the vscode-usage-bridge
-// (pi extension) via setStatus("vscode-usage", json). Codex-style "Usage remaining" rows
-// for the stats popover. Tolerant decoder — junk payloads are ignored; no data simply
-// means no rows (providers/plans that send no rate-limit headers).
-import { formatTokens } from "./util";
+// Webview store for provider usage data pushed by the vscode-usage-bridge (pi extension)
+// via setStatus("vscode-usage", json), plus the row formatter for the always-visible
+// usage gauge bars. Tolerant decoder — junk payloads are ignored; no data simply means
+// no bars (providers/plans without subscription windows).
 
-export interface UsageRow {
+/** One always-visible gauge bar: "5h" / "1w" with the percent REMAINING (battery
+ *  metaphor — 1% used renders a 99% bar) and the reset time for its hover popover. */
+export interface UsageBarRow {
   label: string;
-  value: string;
-}
-
-/** One row of the Codex-style usage menu: label / big value / reset time columns. */
-export interface UsageMenuRow {
-  /** "5h", "Weekly", "Requests", … */
-  label: string;
-  /** "98%" (percent REMAINING for subscription windows) or "4.9k of 5k" for limits. */
-  value: string;
+  /** 0-100, percent remaining. */
+  remainingPercent: number;
   /** "11:24 PM" / "Jun 13" / "" when the provider sent no reset. */
   reset: string;
 }
@@ -26,15 +20,7 @@ interface UnifiedWindow {
   reset?: number;
 }
 
-interface Limit {
-  kind: string;
-  remaining?: number;
-  limit?: number;
-  reset?: number;
-}
-
 let unified: UnifiedWindow[] = [];
-let limits: Limit[] = [];
 
 const listeners = new Set<() => void>();
 
@@ -58,26 +44,18 @@ export function setUsageData(payload: unknown): void {
           reset: num(w.reset),
         }))
     : [];
-  limits = Array.isArray(record?.limits)
-    ? (record!.limits as unknown[])
-        .filter((l): l is Record<string, unknown> => !!l && typeof l === "object")
-        .map((l) => ({
-          kind: typeof l.kind === "string" ? l.kind : "limit",
-          remaining: num(l.remaining),
-          limit: num(l.limit),
-          reset: num(l.reset),
-        }))
-    : [];
+  // The payload's `limits` (API rate limits) are intentionally not rendered anywhere —
+  // the usage UI is scoped to subscription windows — so they are not retained either.
   for (const listener of listeners) listener();
 }
 
 export function hasUsageData(): boolean {
-  return unified.length > 0 || limits.length > 0;
+  return unified.some((w) => w.utilization !== undefined);
 }
 
 function windowLabel(window: string): string {
   if (window === "5h") return "5h";
-  if (window === "7d") return "Weekly";
+  if (window === "7d") return "1w";
   if (window === "overall") return "Plan";
   return window;
 }
@@ -95,57 +73,16 @@ function resetLabel(reset: number | undefined): string {
   }
 }
 
-function kindLabel(kind: string): string {
-  return kind
-    .split("-")
-    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1) : part))
-    .join(" ");
-}
-
-/** Rows for the "Usage remaining" popover section — empty when no data arrived. */
-export function usageSummaryRows(): UsageRow[] {
-  const rows: UsageRow[] = [];
+/** Rows for the gauge bars — subscription windows only; empty when no data arrived. */
+export function usageBarRows(): UsageBarRow[] {
+  const rows: UsageBarRow[] = [];
   for (const w of unified) {
-    const parts: string[] = [];
-    if (w.utilization !== undefined) parts.push(Math.round(w.utilization) + "% used");
-    else if (w.status) parts.push(w.status);
-    const reset = resetLabel(w.reset);
-    if (reset) parts.push("resets " + reset);
-    if (parts.length) rows.push({ label: windowLabel(w.window), value: parts.join(" · ") });
-  }
-  for (const l of limits) {
-    const parts: string[] = [];
-    if (l.remaining !== undefined && l.limit !== undefined) {
-      parts.push(formatTokens(l.remaining) + " of " + formatTokens(l.limit) + " left");
-    } else if (l.remaining !== undefined) {
-      parts.push(formatTokens(l.remaining) + " left");
-    }
-    const reset = resetLabel(l.reset);
-    if (reset) parts.push("resets " + reset);
-    if (parts.length) rows.push({ label: kindLabel(l.kind), value: parts.join(" · ") });
-  }
-  return rows;
-}
-
-/** Rows for the Codex-style click menu: subscription windows show the percent REMAINING
- *  ("5h · 98% · 11:24 PM"), API limits show remaining-of-limit. Empty = no data yet. */
-export function usageMenuRows(): UsageMenuRow[] {
-  const rows: UsageMenuRow[] = [];
-  for (const w of unified) {
-    const value =
-      w.utilization !== undefined
-        ? Math.max(0, Math.min(100, Math.round(100 - w.utilization))) + "%"
-        : w.status ?? "";
-    if (value) rows.push({ label: windowLabel(w.window), value, reset: resetLabel(w.reset) });
-  }
-  for (const l of limits) {
-    const value =
-      l.remaining !== undefined && l.limit !== undefined
-        ? formatTokens(l.remaining) + " of " + formatTokens(l.limit)
-        : l.remaining !== undefined
-        ? formatTokens(l.remaining) + " left"
-        : "";
-    if (value) rows.push({ label: kindLabel(l.kind), value, reset: resetLabel(l.reset) });
+    if (w.utilization === undefined) continue;
+    rows.push({
+      label: windowLabel(w.window),
+      remainingPercent: Math.max(0, Math.min(100, Math.round(100 - w.utilization))),
+      reset: resetLabel(w.reset),
+    });
   }
   return rows;
 }

@@ -67,12 +67,15 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
     <div id="extension-ui-root" class="extension-ui-root" aria-live="polite"></div>
     <div id="onboarding-root" class="onboarding-root" hidden></div>
     <footer class="composer-wrap">
+      <div id="usageBars" class="usage-bars" hidden></div>
       <div id="composer" class="composer">
         <div id="attachmentTray" class="attachment-tray" hidden></div>
         <textarea id="input" placeholder="Ask Pi to work in this project"></textarea>
         <input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden />
         <div class="composer-actions">
           <button id="attachImage" class="ghost-button" title="Attach image" aria-label="Attach image">＋</button>
+          <span id="actionDivider" class="action-divider" hidden></span>
+          <button id="contextChip" class="context-chip" type="button" hidden></button>
           <button class="pill-button" title="Approval mode" aria-label="Approval mode">✋ <span class="optional">Ask for approval</span>⌄</button>
           <button id="stop" class="stop-button" disabled hidden>Stop</button>
           <span class="spacer"></span>
@@ -82,11 +85,8 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
         </div>
       </div>
       <div class="status-strip">
-        <button id="contextChip" class="context-chip" type="button" hidden></button>
         <span class="strip-spacer"></span>
         <div id="sessionStats" class="session-stats" tabindex="0" hidden></div>
-        <button id="usageBtn" class="usage-btn" type="button" aria-haspopup="menu" title="Provider usage remaining"></button>
-        <div id="usage-panel" class="usage-panel" role="menu" aria-label="Usage remaining"></div>
       </div>
     </footer>
   </div>

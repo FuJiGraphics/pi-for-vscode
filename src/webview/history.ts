@@ -23,7 +23,6 @@ export function openHistory(): void {
   appEl.classList.remove("command-open"); // and with the slash-command palette
   appEl.classList.remove("thinking-open");
   appEl.classList.remove("settings-open");
-  appEl.classList.remove("usage-open");
   appEl.classList.add("history-open");
   historySearchEl.value = "";
   historyListEl.innerHTML = '<div class="history-empty">Loading sessions…</div>';

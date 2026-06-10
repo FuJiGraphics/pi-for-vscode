@@ -1,14 +1,20 @@
 // VS Code usage bridge — loaded into pi via `-e` by pi-for-vscode (never installed into
-// the user's pi settings). Subscribes to pi's official `after_provider_response` extension
-// event, which carries the provider's HTTP response headers, and forwards any rate-limit /
-// subscription-usage information to the VS Code webview through `ctx.ui.setStatus`
-// (RPC `extension_ui_request{method:"setStatus", statusKey:"vscode-usage"}` — the webview
-// intercepts that key and renders a Codex-style "Usage remaining" section).
+// the user's pi settings). Forwards ChatGPT-Codex subscription usage to the VS Code
+// webview through `ctx.ui.setStatus` (RPC `extension_ui_request{method:"setStatus",
+// statusKey:"vscode-usage"}` — the webview intercepts that key and renders a Codex-style
+// "Usage remaining" menu, shown only while an openai-codex OAuth login exists).
 //
-// Tolerant by design: header sets differ per provider/plan (Anthropic subscription sends
-// `anthropic-ratelimit-unified-*`, API keys send `anthropic-ratelimit-{requests,…}-*`,
-// OpenAI sends `x-ratelimit-*`); anything absent is simply omitted. The whole handler is
-// wrapped so a parse failure can never disturb pi's run.
+// Two sources, both via pi's official extension API:
+//  1. `GET <codex baseUrl root>/wham/usage` — the same backend endpoint Codex CLI itself
+//     uses (codex-rs backend-client). Fetched on session_start / agent_end with a cooldown,
+//     authorized through ctx.modelRegistry.getApiKeyAndHeaders (pi owns token refresh).
+//     This works regardless of pi's streaming transport (WebSocket or SSE).
+//  2. `after_provider_response` HTTP headers — instant per-request refresh. Codex sends
+//     `x-codex-{primary,secondary}-*` (SSE transport only; the WebSocket path surfaces no
+//     headers), Anthropic sends `anthropic-ratelimit-*`, OpenAI API sends `x-ratelimit-*`.
+//
+// Tolerant by design: anything absent is simply omitted, every handler is wrapped, and a
+// parse/network failure can never disturb pi's run.
 
 type AnyRecord = Record<string, any>;
 
@@ -59,6 +65,15 @@ function toEpochMs(value: unknown): number | undefined {
   return undefined;
 }
 
+/** Codex window length → the unified window names the UI already knows: 300 → "5h",
+ *  10080 → "7d"; anything else keeps a readable unit, or the raw name when absent. */
+function codexWindowLabel(minutes: number | undefined, fallback: string): string {
+  if (minutes === undefined || minutes <= 0) return fallback;
+  if (minutes % 1440 === 0) return minutes / 1440 + "d";
+  if (minutes % 60 === 0) return minutes / 60 + "h";
+  return minutes + "m";
+}
+
 /** OpenAI-style reset durations: "1s", "6m20s", "1h2m3s", "250ms" → ms-from-now offset. */
 export function parseDurationMs(value: string): number | undefined {
   const text = value.trim();
@@ -81,6 +96,9 @@ export function parseUsageHeaders(headers: Record<string, unknown> | undefined, 
 
   const windows = new Map<string, UnifiedWindowUsage>();
   const limits = new Map<string, LimitUsage>();
+  // Codex fields arrive across several headers and the window NAME depends on one of
+  // them (window-minutes), so collect per primary/secondary first, convert after the loop.
+  const codex = new Map<string, { usedPercent?: number; windowMinutes?: number; resetAt?: number; resetAfterMs?: number }>();
   const windowOf = (segments: string[]): UnifiedWindowUsage => {
     const key = segments.length ? segments.join("-") : "overall";
     let entry = windows.get(key);
@@ -129,6 +147,28 @@ export function parseUsageHeaders(headers: Record<string, unknown> | undefined, 
       continue;
     }
 
+    // ChatGPT Codex subscription windows: x-codex-(primary|secondary)-<field>.
+    // used-percent is already a percent (e.g. "1" = 1%) — never ratio-normalized.
+    const codexHeader = /^x-codex-(primary|secondary)-(used-percent|window-minutes|reset-at|reset-after-seconds)$/.exec(key);
+    if (codexHeader) {
+      let entry = codex.get(codexHeader[1]);
+      if (!entry) {
+        entry = {};
+        codex.set(codexHeader[1], entry);
+      }
+      const n = num(value);
+      if (codexHeader[2] === "used-percent") {
+        if (n !== undefined) entry.usedPercent = Math.min(100, Math.max(0, n));
+      } else if (codexHeader[2] === "window-minutes") {
+        entry.windowMinutes = n;
+      } else if (codexHeader[2] === "reset-at") {
+        entry.resetAt = toEpochMs(value);
+      } else if (n !== undefined) {
+        entry.resetAfterMs = n * 1000;
+      }
+      continue;
+    }
+
     // OpenAI: x-ratelimit-{remaining,limit,reset}-{requests,tokens}
     const openai = /^x-ratelimit-(remaining|limit|reset)-(.+)$/.exec(key);
     if (openai) {
@@ -142,28 +182,119 @@ export function parseUsageHeaders(headers: Record<string, unknown> | undefined, 
     }
   }
 
+  // Codex windows join the unified list under duration labels so the existing UI
+  // naming ("5h" / 7d→Weekly) applies unchanged.
+  for (const [name, c] of codex) {
+    if (c.usedPercent === undefined && c.resetAt === undefined && c.resetAfterMs === undefined) continue;
+    const entry = windowOf([codexWindowLabel(c.windowMinutes, name)]);
+    if (c.usedPercent !== undefined) entry.utilization = c.usedPercent;
+    const reset = c.resetAt ?? (c.resetAfterMs !== undefined ? now + c.resetAfterMs : undefined);
+    if (reset !== undefined) entry.reset = reset;
+  }
+
   const unified = [...windows.values()].filter((w) => w.utilization !== undefined || w.status || w.reset);
   const limitList = [...limits.values()].filter((l) => l.remaining !== undefined || l.limit !== undefined);
   if (unified.length === 0 && limitList.length === 0) return undefined;
   return { at: now, unified, limits: limitList };
 }
 
+/** `<codex baseUrl>` (e.g. "https://chatgpt.com/backend-api", possibly with a trailing
+ *  /codex or /codex/responses segment) → the usage endpoint Codex CLI reads. */
+export function codexUsageUrl(baseUrl: unknown): string {
+  const raw = typeof baseUrl === "string" && baseUrl.trim() ? baseUrl.trim() : "https://chatgpt.com/backend-api";
+  const root = raw.replace(/\/+$/, "").replace(/\/codex(\/responses)?$/, "");
+  return root + "/wham/usage";
+}
+
+/** ChatGPT account id from the OAuth access token's JWT claims (same claim pi-ai reads).
+ *  Undefined on any irregularity — the header is then simply omitted, like Codex CLI. */
+export function extractAccountId(token: string): string | undefined {
+  try {
+    const part = token.split(".")[1] ?? "";
+    const payload = JSON.parse(Buffer.from(part.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
+    const accountId = payload?.["https://api.openai.com/auth"]?.chatgpt_account_id;
+    return typeof accountId === "string" && accountId ? accountId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Parse the `GET …/wham/usage` response (codex-rs RateLimitStatusPayload) into the
+ *  bridge payload, or undefined when no window data is present. Pure — unit-tested. */
+export function parseCodexUsageResponse(body: unknown, now: number): UsagePayload | undefined {
+  const rateLimit = (body as AnyRecord)?.rate_limit;
+  if (!rateLimit || typeof rateLimit !== "object") return undefined;
+  const unified: UnifiedWindowUsage[] = [];
+  for (const [name, window] of [["primary", rateLimit.primary_window], ["secondary", rateLimit.secondary_window]] as const) {
+    if (!window || typeof window !== "object") continue;
+    const used = num(window.used_percent);
+    const windowSeconds = num(window.limit_window_seconds);
+    const resetAt = toEpochMs(window.reset_at);
+    const resetAfter = num(window.reset_after_seconds);
+    const entry: UnifiedWindowUsage = {
+      window: codexWindowLabel(windowSeconds !== undefined ? windowSeconds / 60 : undefined, name),
+    };
+    if (used !== undefined) entry.utilization = Math.min(100, Math.max(0, used));
+    const reset = resetAt ?? (resetAfter !== undefined ? now + resetAfter * 1000 : undefined);
+    if (reset !== undefined) entry.reset = reset;
+    if (entry.utilization !== undefined || entry.reset !== undefined) unified.push(entry);
+  }
+  if (unified.length === 0) return undefined;
+  return { at: now, unified, limits: [] };
+}
+
+const ENDPOINT_COOLDOWN_MS = 30_000;
+
 export default function vscodeUsageBridge(pi: AnyRecord): void {
   if (!pi || typeof pi.on !== "function") return;
 
-  let lastSent = "";
+  const post = (ctx: AnyRecord, payload: UsagePayload): void => {
+    if (typeof ctx?.ui?.setStatus === "function") {
+      ctx.ui.setStatus("vscode-usage", JSON.stringify(payload));
+    }
+  };
+
+  // Source 1: the Codex usage endpoint — transport-independent. Skipped silently when
+  // no openai-codex auth is configured (the webview hides the menu in that case too).
+  let lastFetchAt = 0;
+  let fetching = false;
+  const refreshFromEndpoint = async (ctx: AnyRecord): Promise<void> => {
+    if (fetching || Date.now() - lastFetchAt < ENDPOINT_COOLDOWN_MS) return;
+    fetching = true;
+    try {
+      const registry = ctx?.modelRegistry;
+      if (typeof registry?.getAll !== "function" || typeof registry?.getApiKeyAndHeaders !== "function") return;
+      const model = registry.getAll().find(
+        (m: AnyRecord) => m?.provider === "openai-codex" && registry.hasConfiguredAuth?.(m),
+      );
+      if (!model) return;
+      lastFetchAt = Date.now();
+      const auth = await registry.getApiKeyAndHeaders(model);
+      if (!auth?.ok || !auth.apiKey) return;
+      const headers: Record<string, string> = { Authorization: `Bearer ${auth.apiKey}`, originator: "pi" };
+      const accountId = extractAccountId(auth.apiKey);
+      if (accountId) headers["chatgpt-account-id"] = accountId;
+      const response = await fetch(codexUsageUrl(model.baseUrl), { headers, signal: AbortSignal.timeout(10_000) });
+      if (!response.ok) return;
+      const payload = parseCodexUsageResponse(await response.json(), Date.now());
+      if (payload) post(ctx, payload);
+    } catch {
+      // Offline / endpoint change / auth hiccup: usage is cosmetic, never disturb the run.
+    } finally {
+      fetching = false;
+    }
+  };
+  pi.on("session_start", async (_event: AnyRecord, ctx: AnyRecord) => refreshFromEndpoint(ctx));
+  pi.on("agent_end", async (_event: AnyRecord, ctx: AnyRecord) => refreshFromEndpoint(ctx));
+
+  // Source 2: rate-limit response headers — posted on EVERY response that carries usage
+  // info (idempotent, one JSON line per provider call). No change dedup, so a webview
+  // that was closed when an update went out simply catches the next one.
   pi.on("after_provider_response", async (event: AnyRecord, ctx: AnyRecord) => {
     try {
       const payload = parseUsageHeaders(event?.headers, Date.now());
       if (!payload) return;
-      // Serialize without the timestamp for change detection — identical limits across
-      // calls shouldn't re-post.
-      const sig = JSON.stringify({ unified: payload.unified, limits: payload.limits });
-      if (sig === lastSent) return;
-      lastSent = sig;
-      if (typeof ctx?.ui?.setStatus === "function") {
-        ctx.ui.setStatus("vscode-usage", JSON.stringify(payload));
-      }
+      post(ctx, payload);
     } catch {
       // Never let usage reporting disturb the run.
     }

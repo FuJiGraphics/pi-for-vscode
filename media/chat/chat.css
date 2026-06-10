@@ -1498,11 +1498,75 @@ a:hover { text-decoration: underline; }
   padding: 8px 0 10px;
   background: linear-gradient(to top, var(--bg) 86%, color-mix(in srgb, var(--bg) 0%, transparent));
 }
+/* Always-visible subscription usage gauges. Hidden entirely until the Codex OAuth usage
+   bridge has real subscription-window data. */
+.usage-bars {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px 6px;
+}
+.usage-bar {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 16px;
+  padding: 0 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  color: var(--fg);
+  font-size: var(--fs-micro);
+  line-height: 1;
+  overflow: visible;
+  outline: none;
+}
+.usage-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--accent) 48%, transparent);
+  transition: width 120ms ease, background-color 120ms ease;
+}
+.usage-bar.low .usage-bar-fill { background: color-mix(in srgb, var(--error) 58%, transparent); }
+.usage-bar-label, .usage-bar-value {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  font-weight: 750;
+  text-shadow: 0 1px 1px color-mix(in srgb, var(--bg) 72%, transparent);
+}
+.usage-bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-bar-value { flex: none; font-variant-numeric: tabular-nums; }
+.usage-bar-pop {
+  display: none;
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 7px);
+  z-index: 45;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: 0 10px 28px var(--shadow);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.usage-bar:hover .usage-bar-pop,
+.usage-bar:focus .usage-bar-pop { display: block; }
 /* "N queued" pill above the composer: rapid-fire sends accepted and waiting their turn. The dot
    reuses .activity-working-dot's pulse so it reads as live, not a static badge. */
-/* Bottom status strip (Codex-style): file-reference chip left, usage cluster right. */
+/* Bottom status strip: token/cost summary and context gauge only. */
 .status-strip {
-  position: relative; /* anchors the usage panel */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1511,25 +1575,27 @@ a:hover { text-decoration: underline; }
   font-size: var(--fs-micro);
   color: var(--muted);
 }
-.status-strip .context-chip { margin: 0; max-width: 60%; }
 .strip-spacer { flex: 1 1 auto; }
 .session-stats {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   white-space: nowrap;
   cursor: default;
   outline: none;
 }
 .session-stats:hover .stats-summary, .session-stats:focus .stats-summary { color: var(--fg); }
-/* Circular context gauge: conic fill set inline; the ::after punches the donut hole. */
+/* Circular context gauge: conic used-token fill set inline; the center shows remaining %. */
 .ctx-gauge {
   position: relative;
-  width: 13px;
-  height: 13px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .ctx-gauge::after {
   content: "";
@@ -1538,17 +1604,26 @@ a:hover { text-decoration: underline; }
   border-radius: 50%;
   background: var(--bg);
 }
-.ctx-pct { font-variant-numeric: tabular-nums; }
-/* Rich hover popover (pure CSS — :hover / keyboard :focus on the cluster). */
+.ctx-gauge-num {
+  position: relative;
+  z-index: 1;
+  color: var(--fg);
+  font-size: var(--fs-micro);
+  line-height: 1;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.04em;
+}
+/* Context-only hover popover (pure CSS — :hover / keyboard :focus on the cluster). */
 .stats-popover {
   display: none;
   position: absolute;
   right: 0;
   bottom: calc(100% + 8px);
-  width: 250px;
-  padding: 10px 12px;
+  width: 230px;
+  padding: 11px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--surface);
   box-shadow: 0 14px 36px var(--shadow);
   z-index: 40;
@@ -1557,86 +1632,47 @@ a:hover { text-decoration: underline; }
 }
 .session-stats:hover .stats-popover, .session-stats:focus .stats-popover { display: block; }
 .sp-title {
-  margin: 8px 0 3px;
+  margin: 0 0 4px;
   color: var(--muted);
   font-size: var(--fs-micro);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .06em;
 }
-.sp-title:first-child { margin-top: 0; }
+.sp-big {
+  margin: 0 0 8px;
+  color: var(--fg);
+  font-size: calc(var(--fs-base) + 10px);
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -.04em;
+  font-variant-numeric: tabular-nums;
+}
+.sp-big span {
+  margin-left: 5px;
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  font-weight: 650;
+  letter-spacing: 0;
+}
 .sp-row {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  padding: 1.5px 0;
+  padding: 2px 0 0;
   font-size: var(--fs-meta);
   color: var(--subtle);
 }
-.sp-row span:first-child { color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.sp-row span:last-child { flex: none; font-variant-numeric: tabular-nums; }
+.sp-row span:first-child { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sp-row span:last-child { flex: none; color: var(--fg); font-variant-numeric: tabular-nums; }
 .sp-bar {
-  height: 4px;
-  margin: 4px 0 2px;
+  height: 5px;
+  margin: 0 0 6px;
   border-radius: 999px;
   overflow: hidden;
   background: color-mix(in srgb, var(--fg) 12%, transparent);
 }
 .sp-bar span { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
-/* Codex-style "Usage remaining" click menu in the status strip. */
-.usage-btn {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 9px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: none;
-  color: var(--muted);
-  font-size: var(--fs-micro);
-  cursor: pointer;
-  transition: color 130ms ease, background-color 130ms ease, border-color 130ms ease;
-}
-.usage-btn:hover { color: var(--fg); background: var(--surface-hover); }
-.usage-btn.has-data { color: color-mix(in srgb, var(--accent) 75%, var(--fg)); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
-.app.usage-open .usage-btn { color: var(--fg); background: var(--surface-hover); }
-.usage-panel {
-  display: none;
-  position: absolute;
-  right: 10px;
-  bottom: calc(100% + 8px);
-  width: min(270px, calc(100% - 24px));
-  padding: 11px 13px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: 0 14px 36px var(--shadow);
-  z-index: 40;
-}
-.app.usage-open .usage-panel { display: block; }
-.usage-head {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 7px;
-  color: var(--muted);
-  font-size: var(--fs-meta);
-  font-weight: 700;
-}
-.usage-head svg { color: var(--accent); }
-.usage-row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 4px 0;
-  font-size: var(--fs-body);
-}
-.usage-row + .usage-row { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
-.usage-label { flex: 1 1 auto; min-width: 0; color: var(--fg); font-weight: 700; }
-.usage-value { flex: none; color: var(--fg); font-variant-numeric: tabular-nums; }
-.usage-reset { flex: none; min-width: 64px; text-align: right; color: var(--muted); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
-.usage-empty { color: var(--muted); font-size: var(--fs-meta); line-height: 1.5; max-width: 240px; }
 
 /* Mid-run sends waiting in pi's steer/follow-up queue: dimmed until pi consumes them. */
 .message.user.pending .bubble { opacity: .62; }
@@ -1687,36 +1723,46 @@ a:hover { text-decoration: underline; }
 .attachment-tray {
   padding: 0 0 8px;
 }
-/* Active-editor context chip above the textarea: dim by default, accent-lit when the
-   reference is attached to the next prompt (click toggles). */
+/* Active-editor context chip inside the composer action row: muted until attached. */
+.action-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 16px;
+  margin: 0 1px;
+  background: color-mix(in srgb, var(--border) 86%, transparent);
+}
 .context-chip {
+  height: 30px;
+  min-width: 0;
+  max-width: min(260px, 42vw);
+  padding: 0 8px;
+  border-radius: 999px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  max-width: 100%;
-  margin: 0 0 6px;
-  padding: 3px 9px;
-  border: 1px dashed var(--border);
-  border-radius: 11px;
+  gap: 5px;
+  flex: 0 1 auto;
+  color: var(--muted);
   background: transparent;
-  color: var(--subtle);
   font-size: var(--fs-meta);
   cursor: pointer;
-  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+  transition: color 140ms ease, background-color 140ms ease, transform 120ms ease;
 }
-.context-chip:hover { color: var(--fg); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
-.context-chip.on {
-  border-style: solid;
-  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--fg);
+.context-chip:hover { color: var(--fg); background: var(--surface-hover); }
+.context-chip:active { transform: scale(.96); }
+.context-chip.on { color: var(--fg); }
+.context-chip-icon {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: color 140ms ease;
 }
-.context-chip .context-chip-mark { color: var(--accent); font-weight: 700; }
-.context-chip .context-chip-label {
+.context-chip.on .context-chip-icon { color: var(--accent); }
+.context-chip-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--mono);
+  font-size: var(--fs-meta);
 }
 textarea {
   width: 100%;
