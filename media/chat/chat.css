@@ -525,6 +525,9 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   column-gap: 9px;
   align-items: start;
   padding: 2px 0;
+  /* Uncapped timelines: bound layout invalidation to the row. (No `paint` — it would
+     clip the running dot's pulsing halo, which extends past the row box.) */
+  contain: layout;
 }
 .tl-row {
   grid-column: 2;

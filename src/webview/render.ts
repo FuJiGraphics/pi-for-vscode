@@ -13,9 +13,8 @@ import { state, save, isRenderSuppressed } from "./state";
 import { messagesEl, titleEl, thinkingControlEl, modelEl, stopEl, composerEl, sendEl, inputEl, queueIndicatorEl } from "./dom";
 import { escapeHtml, formatTime, formatDuration, roleLabel } from "./util";
 import { renderMarkdown } from "./markdown";
-import { cardFor, effectiveExpanded, isCardCollapsible, stepDetail, timelineRow, tokCost } from "./cards";
-import { deriveTodos, isTodoStep, todoCardHtml } from "./cardsTodo";
-import { isTextStep, textStepRowHtml } from "./textSteps";
+import { tokCost } from "./cards";
+import { reconcileTimeline, rowsForActivity, stepSig, timelineRowsHtml } from "./timeline";
 import { isThinkingStep, lastRunningThinkingStep, liveThinkingTail } from "./thinkingSteps";
 import { statusTaskText } from "./statusLine";
 import { thinkingLabel } from "./spinner";
@@ -23,12 +22,13 @@ import { piMarkHtml } from "./piMark";
 import { pixelWordHtml } from "./pixelFont";
 import { applyLatestScroll, shouldFollowLatest } from "./scroll";
 import { hasPendingImageAttachments, imageDataUrl, imageMeta } from "./attachments";
-import type { Activity, UiImageAttachment, UiMessage } from "./types";
+import type { UiImageAttachment, UiMessage } from "./types";
 
 let renderQueued = false;
 let emptyRendered = false;
 const renderedNodes = new Map<string, HTMLElement>();
 const renderKeys = new WeakMap<HTMLElement, string>();
+const renderOuterKeys = new WeakMap<HTMLElement, string>();
 
 // Streaming re-parse gate: the reveal animation paints every frame, but markdown-it + Shiki are
 // too heavy to re-run per frame on a growing buffer. Re-render only after the revealed text
@@ -128,58 +128,6 @@ function renderThinkingControl(): void {
 
 const SEP = " · ";
 
-function stepsRowsHtml(activity: Activity): string {
-  const steps = activity.steps;
-  const rows: string[] = [];
-  // Lead "Thought for Xs" node — the time spent before the first step ran (Claude-style).
-  // Suppressed when real thinking steps exist: they carry their own timed rows, and the
-  // synthetic lead would double-count the same seconds.
-  const firstStart = steps.length ? steps[0].startedAt : activity.endedAt || Date.now();
-  if (firstStart - activity.startedAt >= 1500 && !steps.some(isThinkingStep)) {
-    rows.push(timelineRow({ status: "done", label: "Thought for " + formatDuration(activity.startedAt, firstStart) }));
-  }
-  if (!steps.length) {
-    if (rows.length === 0) rows.push(timelineRow({ status: "running", label: "Preparing context" }));
-    return rows.join("");
-  }
-  const visible = steps.slice(-16);
-  // All `todo` calls collapse into ONE consolidated checklist (Claude-style), folded ONCE
-  // here and rendered at the position of the most recent todo step; if every todo step
-  // scrolled out of the visible window but todos still exist, the card is appended at the end.
-  const todos = steps.some(isTodoStep) ? deriveTodos(steps) : [];
-  let lastTodoIndex = -1;
-  for (let i = 0; i < visible.length; i++) if (isTodoStep(visible[i])) lastTodoIndex = i;
-  visible.forEach((step, index) => {
-    if (isTodoStep(step)) {
-      if (index === lastTodoIndex) rows.push(todoCardHtml(todos));
-      return;
-    }
-    if (isTextStep(step)) {
-      rows.push(textStepRowHtml(step));
-      return;
-    }
-    rows.push(timelineRow({
-      id: step.id,
-      status: step.status,
-      label: step.label,
-      detail: stepDetail(step),
-      // A done thinking row's label already reads "Thought for Xs" — a time chip would repeat it.
-      time: step.endedAt && !isThinkingStep(step) ? formatDuration(step.startedAt, step.endedAt) : "",
-      tokens: step.tokens,
-      cost: step.cost,
-      gen: step.kind === "generation",
-      output: step.output,
-      expanded: effectiveExpanded(step),
-      card: cardFor(step),
-      cardCollapsible: isCardCollapsible(step),
-    }));
-  });
-  if (lastTodoIndex === -1 && todos.length > 0) {
-    rows.push(todoCardHtml(todos));
-  }
-  return rows.join("");
-}
-
 // Turn-total usage "5.3k tokens | $0.03" — no leading separator; the header joins fragments.
 function usageChip(message: UiMessage): string {
   return message.tokens ? tokCost(message.tokens, message.cost) : "";
@@ -239,23 +187,31 @@ function statusBlock(message: UiMessage, mode: "spinner" | "working" | "done", e
     ? '<button class="activity-toggle" data-action="toggle-activity" data-id="' + message.id + '">'
     : '<div class="activity-toggle static">';
   const close = hasSteps ? "</button>" : "</div>";
-  const details = hasSteps && activity ? '<div class="activity-details">' + stepsRowsHtml(activity) + "</div>" : "";
+  const details = hasSteps && activity ? '<div class="activity-details">' + timelineRowsHtml(activity, highlightVersion) + "</div>" : "";
   return '<div class="' + classes + '" data-activity-id="' + message.id + '">' + open + inner + chevron + close + details + "</div>";
 }
 
-function assistantStatusHtml(message: UiMessage): string {
+// Which status header (if any) the assistant message shows. Spinner mode only at the true
+// turn start (no steps yet) — once any step exists the header is "working"; otherwise each
+// toolUse demotion (text → "") would bounce the header back to the giant spinner mid-turn.
+// Folded into the OUTER render key: a mode flip forces a full rebuild, anything else can
+// reconcile rows in place.
+function statusMode(message: UiMessage): "spinner" | "working" | "done" | "none" {
   const active = isActive(message);
-  const activity = message.activity;
-  const steps = activity?.steps ?? [];
+  const steps = message.activity?.steps ?? [];
+  if (active && !message.text && steps.length === 0) return "spinner";
+  if (!message.activity) return "none";
+  if (active && steps.length === 0) return "none"; // streaming text with no tools → no header line
+  return active ? "working" : "done";
+}
 
+function assistantStatusHtml(message: UiMessage): string {
+  const mode = statusMode(message);
+  if (mode === "none") return "";
   // While the turn is active the timeline stays expanded so progress reads as a live
-  // connected graph. Spinner mode only at the true turn start (no steps yet) — once any
-  // step exists the header is "working"; otherwise each toolUse demotion (text → "")
-  // would bounce the header back to the giant spinner mid-turn.
-  if (active && !message.text && steps.length === 0) return statusBlock(message, "spinner", true);
-  if (!activity) return "";
-  if (active && steps.length === 0) return ""; // streaming text with no tools → no header line
-  return statusBlock(message, active ? "working" : "done", active ? true : !!activity.expanded);
+  // connected graph; done turns keep the user's toggle (default open — work stays visible).
+  const expanded = mode === "done" ? !!message.activity?.expanded : true;
+  return statusBlock(message, mode, expanded);
 }
 
 function assistantActions(message: UiMessage): string {
@@ -349,40 +305,44 @@ function messageHtml(message: UiMessage): string {
   return '<div class="role">' + escapeHtml(roleLabel(message.role)) + "</div>" + staticBody(message) + uiHtml(message);
 }
 
-// Structural key: intentionally excludes per-frame volatiles (revealed, spinner
-// glyph/word/seconds) so streaming/thinking does NOT rebuild the node each frame.
-// Assistant text is excluded too (the painter fills the bubble); the final full
-// text lands when `live` flips false and the node is rebuilt once.
-// step.thinkingText is volatile for the same reason — NEVER fold it into stepsSig
-// (the live painter updates the .thinking-text leaf; thinking_start/end change
-// status/label and rebuild exactly twice per block). Exported for the key-stability test.
-export function messageRenderKey(message: UiMessage): string {
-  const active = isActive(message);
+// Structural keys, two-part. The OUTER key covers everything that changes the message's
+// skeleton (role, bubble presence, header mode, expansion, usage chip, ui, attachments) —
+// a change forces a full innerHTML rebuild. The STEPS key folds only per-step signatures —
+// when it alone changes, updateMessageNode reconciles the timeline rows in place (O(changed
+// rows), element identity preserved). Both intentionally exclude per-frame volatiles
+// (revealed, spinner glyph/word/seconds, streamed assistant text, step.thinkingText) so
+// streaming/thinking never rebuilds the node; the painter owns those leaves.
+function outerRenderKey(message: UiMessage): string {
   const activity = message.activity;
-  const stepsSig = activity
-    ? activity.steps
-        // Narration steps fold only their LENGTH (immutable after creation; never the body —
-        // sig strings must stay small).
-        .map((s) => s.id + "|" + s.status + "|" + s.label + "|" + (s.tool || "") + "|" + s.detail + "|" + (s.output ? "O" : "") + (effectiveExpanded(s) ? "X" : "") + (s.kind === "text" ? "T" + (s.text?.length || 0) : ""))
-        .join(";") +
-      "#" + activity.steps.length + (activity.expanded ? "E" : "") + (activity.endedAt ? "D" : "") + "@" + highlightVersion
-    : "";
   return JSON.stringify({
     role: message.role,
     pre: !!message.pre,
     error: !!message.error,
     hasText: message.text.length > 0,
-    live: active,
-    stepsSig,
+    live: isActive(message),
+    mode: message.role === "assistant" ? statusMode(message) : "",
+    hasSteps: (activity?.steps.length ?? 0) > 0,
+    expanded: activity ? !!activity.expanded : false,
+    ended: activity ? !!activity.endedAt : false,
     tokens: message.tokens || 0,
     interrupted: !!message.interrupted,
     ui: message.ui ? message.ui.kind + (message.ui.resolved ? "R" : "") : "",
     attachments: (message.attachments || []).map((attachment) => attachment.id + "|" + attachment.name).join(";"),
     text: message.role === "assistant" ? "" : message.text,
     // Bubble code blocks highlight lazily — fold highlightVersion in so a message repaints when its
-    // grammar finishes loading (or the theme changes). Without this only tool cards (stepsSig) would.
+    // grammar finishes loading (or the theme changes).
     hl: highlightVersion,
   });
+}
+
+function stepsRenderKey(message: UiMessage): string {
+  const activity = message.activity;
+  return activity ? activity.steps.map(stepSig).join(";") + "#" + activity.steps.length + "@" + highlightVersion : "";
+}
+
+/** The full structural key (outer + steps) — exported for the key-stability tests. */
+export function messageRenderKey(message: UiMessage): string {
+  return outerRenderKey(message) + "§" + stepsRenderKey(message);
 }
 
 export function currentSessionTitle(): string {
@@ -399,14 +359,36 @@ export function currentSessionTitle(): string {
   return "New session";
 }
 
+// Cards whose innerHTML was (re)written this render — markOverflowingCards scans only
+// these scopes instead of every card in the conversation on every render.
+const dirtyCardScopes: HTMLElement[] = [];
+
 function updateMessageNode(node: HTMLElement, message: UiMessage): void {
   node.className = "message " + message.role + (message.error ? " error" : "");
   node.dataset.id = message.id;
   const key = messageRenderKey(message);
-  if (renderKeys.get(node) !== key) {
-    renderKeys.set(node, key);
-    node.innerHTML = messageHtml(message);
+  if (renderKeys.get(node) === key) return;
+  const outer = outerRenderKey(message);
+  const activity = message.activity;
+  // Steps-only change → reconcile the timeline rows in place and refresh the header line.
+  // The message skeleton (and the element under the user's cursor) survives untouched.
+  if (renderOuterKeys.get(node) === outer && activity) {
+    const details = node.querySelector<HTMLElement>(".activity-details");
+    if (details) {
+      renderKeys.set(node, key);
+      dirtyCardScopes.push(...reconcileTimeline(details, rowsForActivity(activity, highlightVersion)));
+      const toggle = node.querySelector(".activity-toggle");
+      const mode = statusMode(message);
+      if (toggle && mode !== "none") {
+        toggle.innerHTML = statusHeaderInner(message, mode) + '<span class="activity-chevron">›</span>';
+      }
+      return;
+    }
   }
+  renderKeys.set(node, key);
+  renderOuterKeys.set(node, outer);
+  node.innerHTML = messageHtml(message);
+  dirtyCardScopes.push(node);
 }
 
 function setText(node: HTMLElement, selector: string, text: string): void {
@@ -571,10 +553,15 @@ export function render(): void {
 
 // Cards clip their (compact) preview at a max-height; flag the ones whose content overflows so
 // CSS can fade the bottom edge — a "there's more, click ⤢ to expand" hint. Read once after all
-// innerHTML writes to avoid interleaved layout reads.
+// innerHTML writes to avoid interleaved layout reads. Scoped to the elements actually rewritten
+// this render (an uncapped timeline makes a full-conversation scan too expensive per event).
+const OVERFLOW_CARDS = ".tl-diff, .tl-write, .tl-read, .tl-thinking";
 function markOverflowingCards(): void {
-  for (const node of renderedNodes.values()) {
-    node.querySelectorAll<HTMLElement>(".tl-diff, .tl-write, .tl-read, .tl-thinking").forEach((card) => {
+  if (!dirtyCardScopes.length) return;
+  const scopes = dirtyCardScopes.splice(0);
+  for (const scope of scopes) {
+    if (!scope.isConnected) continue;
+    scope.querySelectorAll<HTMLElement>(OVERFLOW_CARDS).forEach((card) => {
       card.classList.toggle("is-overflowing", card.scrollHeight > card.clientHeight + 1);
     });
   }
