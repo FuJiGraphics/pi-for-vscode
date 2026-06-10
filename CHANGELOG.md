@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Interleave assistant narration chronologically in the activity timeline (Claude Code-style flow): intermediate text now lands between the tool steps it precedes, and the final answer stays in the bubble. This also fixes intermediate narration being overwritten on multi-call turns.
+- Show EVERY timeline step — the 16-step cap is gone. A keyed row reconciler updates only changed rows, so long turns stay smooth and hover/animations survive streaming.
+- Restore sessions with full fidelity: reopened sessions now rebuild tool steps (with outputs and diffs), narration, thinking blocks, and per-turn usage — structurally identical to the live view.
+- Per-tool visual identity: icons and color tones for read/bash/edit/write/grep/find/ls/todo/web tools, with row-entry and completion animations (reduced-motion aware).
+- Real-time chat feel: mid-run sends render instantly as dimmed "Queued" bubbles that resolve in order; shorter send debounce windows.
+- Model picker now shows per-model pricing ($/Mtok in/out), context window, and vision/thinking badges — all reported by pi's model registry (no hardcoded prices).
+- New thinking-level chip ("Thinking: high") with a popover describing every level; unsupported levels are shown disabled. Note: `xhigh` is now offered only when the model explicitly supports it (pi previously clamped it silently).
+- Session usage strip above the composer: cumulative tokens · cost and a context-usage bar ("N% left"), refreshed from pi's session stats after each run and on compaction.
+- Sign-in is now separated from the workspace: a full-screen onboarding screen appears when no provider is authenticated (subscription/OAuth or API key), and the chat unlocks once login completes — including logins done in a terminal pi.
+- New Settings panel (gear button): per-provider account status with sign-out, sign-in entry point, and extension/pi version info. Auth actions moved out of the model picker.
+
 - Bundle two validated pi extensions — **todos** (`@juicesharp/rpiv-todo`) and **web access** (`pi-web-access`) — and load them automatically unless you already have your own. Gated by `pi-for-vscode.bundle.todo` / `pi-for-vscode.bundle.web` (both on by default).
 - Render a Claude-style tool timeline: Read/Write/Edit cards with a line-number gutter, a +/- sign column, and full-row add/remove bands; Edit cards upgrade to pi's real line-numbered unified diff once available. Plus Bash IN/OUT, a live todo checklist, web search/fetch results, per-generation token checkpoints, and an inline "Interrupted" marker.
 - Bundle the pi agent so the extension works without a pre-installed `pi`. A known-good build ships inside each platform-specific `.vsix` and is extracted on first use (offline).
