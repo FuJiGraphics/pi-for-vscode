@@ -20,7 +20,12 @@ const BUNDLED_PI_PACKAGES: BundledPiPackage[] = [
   { name: "@juicesharp/rpiv-todo", setting: "todo", entry: "index.ts" },
   { name: "pi-web-access", setting: "web", entry: "index.ts" },
 ];
-const AUTH_BRIDGE_RELATIVE_PATH = ["resources", "pi-extensions", "vscode-auth-bridge.ts"] as const;
+// Bridges shipped with this UI shell (always attempted — they ARE the VS Code client glue):
+// auth (login/logout commands) and usage (rate-limit header forwarding).
+const BRIDGE_RELATIVE_PATHS: ReadonlyArray<readonly string[]> = [
+  ["resources", "pi-extensions", "vscode-auth-bridge.ts"],
+  ["resources", "pi-extensions", "vscode-usage-bridge.ts"],
+];
 
 /** Pure: does a pi `settings.json` `packages` array already reference this package name? */
 export function packageInList(packages: unknown, pkgName: string): boolean {
@@ -34,7 +39,7 @@ export class BundledExtensionResolver {
   // packages. The auth bridge is always attempted because it belongs to this UI
   // shell; todo/web still follow the existing use-installed-else-bundled policy.
   async computeArgs(runtime: PiRuntime, cwd: string): Promise<string[]> {
-    const args = this.computeAuthBridgeArgs();
+    const args = this.computeBridgeArgs();
     const cfg = vscode.workspace.getConfiguration("pi-for-vscode");
     if (cfg.get<"auto" | "always" | "never">("useBundledPi", "auto") === "never") return args;
 
@@ -57,9 +62,13 @@ export class BundledExtensionResolver {
     return args;
   }
 
-  private computeAuthBridgeArgs(): string[] {
-    const file = vscode.Uri.joinPath(this.context.extensionUri, ...AUTH_BRIDGE_RELATIVE_PATH).fsPath;
-    return fs.existsSync(file) ? ["-e", file] : [];
+  private computeBridgeArgs(): string[] {
+    const args: string[] = [];
+    for (const relative of BRIDGE_RELATIVE_PATHS) {
+      const file = vscode.Uri.joinPath(this.context.extensionUri, ...relative).fsPath;
+      if (fs.existsSync(file)) args.push("-e", file);
+    }
+    return args;
   }
 
   // True when a package name appears in the user's pi `packages` list (global or

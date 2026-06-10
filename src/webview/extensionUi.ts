@@ -2,6 +2,8 @@ import { post } from "./bridge";
 import { addMessage, recordActivity } from "./conversation";
 import { extensionUiRootEl, inputEl } from "./dom";
 import { autoResizeInput, updateInputState } from "./input";
+import { scheduleRender } from "./render";
+import { setUsageData } from "./usageData";
 import { escapeHtml } from "./util";
 
 type UiRequest = Record<string, any>;
@@ -242,6 +244,17 @@ export function handleExtensionUiRequest(request: UiRequest): void {
   if (method === "setStatus") {
     const key = text(request.statusKey) || "status";
     const statusText = text(request.statusText);
+    // The usage bridge's machine-readable channel — route to the usage store instead of
+    // showing the raw JSON as a status line.
+    if (key === "vscode-usage") {
+      try {
+        setUsageData(JSON.parse(statusText));
+        scheduleRender();
+      } catch {
+        // Malformed payload: ignore.
+      }
+      return;
+    }
     if (statusText) statusEntries.set(key, statusText);
     else statusEntries.delete(key);
     renderExtensionUi();
