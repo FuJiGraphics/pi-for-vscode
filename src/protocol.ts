@@ -135,6 +135,15 @@ export interface SessionListItem {
   needsInput?: boolean;
 }
 
+/** Pi-reported pricing, USD per million tokens. Passed through verbatim — pi's model
+ *  registry is the authority; the extension never hardcodes prices. */
+export interface ModelCost {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
 export interface ModelListItem {
   /** Stable webview id, qualified as "<provider>/<modelId>". */
   id: string;
@@ -147,6 +156,14 @@ export interface ModelListItem {
   /** Whether the model supports a thinking level (capability flag). */
   thinking: boolean;
   isCurrent: boolean;
+  /** Omitted when pi doesn't report pricing (older pi / custom models). */
+  cost?: ModelCost;
+  /** Context window in tokens, when pi reports it. */
+  contextWindow?: number;
+  /** Max output tokens per response, when pi reports it. */
+  maxTokens?: number;
+  /** Model accepts image input (pi's `input` array contains "image"). */
+  vision?: boolean;
 }
 
 /** A slash command Pi exposes via the `get_commands` RPC (skill / prompt-template / extension). */

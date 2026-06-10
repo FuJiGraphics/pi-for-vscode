@@ -1,5 +1,5 @@
 import type { PiRpcClient } from "./piRpcClient";
-import type { ModelListItem } from "./protocol";
+import type { ModelCost, ModelListItem } from "./protocol";
 import { asRecord } from "./sessionFormat";
 import type { SessionRuntime } from "./sessionRuntime";
 import type { WebviewPresenter } from "./webviewPresenter";
@@ -9,6 +9,21 @@ const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhi
 function stringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = record?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberField(record: Record<string, unknown> | undefined, key: string): number | undefined {
+  const value = record?.[key];
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/** Pi's per-model pricing (USD/Mtok), passed through verbatim. Older pi without a cost
+ *  object (or a malformed one) → undefined, and the picker simply omits the price chip. */
+function costFromModel(model: Record<string, unknown>): ModelCost | undefined {
+  const cost = asRecord(model.cost);
+  const input = numberField(cost, "input");
+  const output = numberField(cost, "output");
+  if (input === undefined || output === undefined) return undefined;
+  return { input, output, cacheRead: numberField(cost, "cacheRead"), cacheWrite: numberField(cost, "cacheWrite") };
 }
 
 function supportsThinking(model: Record<string, unknown>): boolean {
@@ -53,6 +68,15 @@ export function modelListItemsFromRpc(models: unknown, currentModel?: unknown): 
       thinking: supportsThinking(model),
       isCurrent: false,
     };
+    // Enrichment fields are set only when pi reports them — an older pi simply omits
+    // them and the picker renders without the price/context chips.
+    const cost = costFromModel(model);
+    if (cost) item.cost = cost;
+    const contextWindow = numberField(model, "contextWindow");
+    if (contextWindow) item.contextWindow = contextWindow;
+    const maxTokens = numberField(model, "maxTokens");
+    if (maxTokens) item.maxTokens = maxTokens;
+    if (Array.isArray(model.input) && (model.input as unknown[]).includes("image")) item.vision = true;
     item.isCurrent = isCurrentModelItem(item, currentModel);
     items.push(item);
   }

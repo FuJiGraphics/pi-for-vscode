@@ -45,6 +45,34 @@ test("modelListItemsFromRpc maps Pi full model objects to picker items", () => {
   ]);
 });
 
+test("modelListItemsFromRpc passes through pricing/context/vision; omits them for older pi", () => {
+  const items = modelListItemsFromRpc([
+    {
+      provider: "anthropic",
+      id: "claude-opus-4-1-20250805",
+      name: "Claude Opus 4.1",
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
+      contextWindow: 200000,
+      maxTokens: 32000,
+    },
+    // Older pi: no cost/contextWindow/input fields at all.
+    { provider: "openai", id: "gpt-old", name: "GPT Old" },
+    // Malformed cost (string values) → omitted, not NaN'd through.
+    { provider: "x", id: "weird", cost: { input: "3", output: "15" } },
+  ]);
+
+  assert.deepEqual(items[0].cost, { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 });
+  assert.equal(items[0].contextWindow, 200000);
+  assert.equal(items[0].maxTokens, 32000);
+  assert.equal(items[0].vision, true);
+  assert.equal("cost" in items[1], false);
+  assert.equal("contextWindow" in items[1], false);
+  assert.equal("vision" in items[1], false);
+  assert.equal("cost" in items[2], false);
+});
+
 test("isCurrentModelItem accepts bare or qualified current model ids", () => {
   const item = { id: "openai/gpt-5.1", provider: "openai", modelId: "gpt-5.1" };
   assert.equal(isCurrentModelItem(item, { id: "openai/gpt-5.1" }), true);

@@ -3,8 +3,8 @@
 // Pi switch model through `set_model`, and opens Pi-owned auth commands.
 import { appEl, modelEl, modelListEl, modelPanelEl, modelSearchEl } from "./dom";
 import { post } from "./bridge";
-import { escapeHtml } from "./util";
-import type { ModelListItem } from "../protocol";
+import { escapeHtml, formatTokens } from "./util";
+import type { ModelCost, ModelListItem } from "../protocol";
 
 let allModels: ModelListItem[] = [];
 
@@ -64,7 +64,38 @@ function authActionsHtml(): string {
   return authAvailable ? AUTH_ACTIONS_HTML : AUTH_FALLBACK_HTML;
 }
 
-function itemHtml(model: ModelListItem): string {
+// "$3" / "$0.33" — max 2 decimals, trailing zeros trimmed.
+function formatPrice(perMtok: number): string {
+  return "$" + perMtok.toFixed(2).replace(/\.?0+$/, "");
+}
+
+/** Compact price chip, "$3/$15 Mtok" (input/output per million tokens). Free or
+ *  unreported pricing → "" (the chip is omitted, never shown as $0). */
+export function priceLabel(cost: ModelCost | undefined): string {
+  if (!cost || (cost.input <= 0 && cost.output <= 0)) return "";
+  return formatPrice(cost.input) + "/" + formatPrice(cost.output) + " Mtok";
+}
+
+/** Multi-line title tooltip: full pricing (cache rates included) + context/output limits. */
+export function itemTooltip(model: ModelListItem): string {
+  const lines: string[] = [];
+  const cost = model.cost;
+  if (cost && (cost.input > 0 || cost.output > 0)) {
+    lines.push("Input " + formatPrice(cost.input) + " / Output " + formatPrice(cost.output) + " per Mtok");
+    if (cost.cacheRead || cost.cacheWrite) {
+      lines.push("Cache read " + formatPrice(cost.cacheRead ?? 0) + " / write " + formatPrice(cost.cacheWrite ?? 0) + " per Mtok");
+    }
+  }
+  const limits: string[] = [];
+  if (model.contextWindow) limits.push("Context " + formatTokens(model.contextWindow));
+  if (model.maxTokens) limits.push("Max output " + formatTokens(model.maxTokens));
+  if (limits.length) lines.push(limits.join(" · "));
+  return lines.join("\n");
+}
+
+export function itemHtml(model: ModelListItem): string {
+  const price = priceLabel(model.cost);
+  const tooltip = itemTooltip(model);
   return (
     '<button class="model-item' +
     (model.isCurrent ? " current" : "") +
@@ -72,12 +103,17 @@ function itemHtml(model: ModelListItem): string {
     escapeHtml(model.provider) +
     '" data-model-id="' +
     escapeHtml(model.modelId) +
-    '"><div class="model-main"><div class="model-title">' +
+    '"' +
+    (tooltip ? ' title="' + escapeHtml(tooltip) + '"' : "") +
+    '><div class="model-main"><div class="model-title">' +
     escapeHtml(model.model) +
     (model.isCurrent ? '<span class="current-tag"> Current</span>' : "") +
     '</div><div class="model-meta">' +
     escapeHtml(model.provider) +
     (model.thinking ? '<span class="model-cap">thinking</span>' : "") +
+    (model.vision ? '<span class="model-cap">vision</span>' : "") +
+    (price ? '<span class="model-price">' + escapeHtml(price) + "</span>" : "") +
+    (model.contextWindow ? '<span class="model-ctx">' + escapeHtml(formatTokens(model.contextWindow)) + " ctx</span>" : "") +
     "</div></div></button>"
   );
 }

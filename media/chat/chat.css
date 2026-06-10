@@ -1218,6 +1218,16 @@ a:hover { text-decoration: underline; }
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: color-mix(in srgb, var(--accent) 80%, var(--fg));
 }
+/* Pricing / context chips: neutral so the capability chips stay the accent pop. */
+.model-price, .model-ctx {
+  padding: var(--chip-pad);
+  border-radius: var(--chip-radius);
+  font-size: var(--fs-micro);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 
 /* Slash-command palette — floating above the composer, full composer width */
 .command-panel {
