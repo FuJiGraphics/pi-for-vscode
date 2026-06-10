@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 // Stubs MUST come before any webview module (contextChip's import chain reaches dom.ts).
 import "./_bridgeStub";
 import "./_domStub";
-import { contextReference, formatContextLabel, toggleContextInclude, updateEditorContext } from "../src/webview/contextChip";
+import { contextReference, formatContextLabel, resetContextInclude, toggleContextInclude, updateEditorContext } from "../src/webview/contextChip";
 
 test("formatContextLabel: file, single line, and line range", () => {
   assert.equal(formatContextLabel({}), "");
@@ -22,4 +22,14 @@ test("contextReference is empty until the chip is toggled on, then tracks the ed
   updateEditorContext({}); // no usable editor → nothing to attach even while on
   assert.equal(contextReference(), "");
   toggleContextInclude(); // back off for any later test
+});
+
+test("switching sessions detaches the reference (attach was a per-conversation decision)", () => {
+  updateEditorContext({ path: "src/a.ts" });
+  toggleContextInclude();
+  assert.equal(contextReference(), "src/a.ts");
+  resetContextInclude(); // main.ts activate handler fires this on a REAL session change
+  assert.equal(contextReference(), "");
+  resetContextInclude(); // idempotent when already off
+  assert.equal(contextReference(), "");
 });

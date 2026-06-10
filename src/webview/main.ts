@@ -12,7 +12,7 @@ import { initImageAttachments } from "./attachments";
 import { closeHistory, toggleHistory, renderSessionList, initHistory } from "./history";
 import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker, setAuthAvailable } from "./modelPicker";
 import { acceptActive, closeCommandMenu, initCommandMenu, invalidateCommands, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
-import { initContextChip, updateEditorContext } from "./contextChip";
+import { initContextChip, resetContextInclude, updateEditorContext } from "./contextChip";
 import { ensureAnimating } from "./animator";
 import { piMarkHtml } from "./piMark";
 import { post } from "./bridge";
@@ -295,6 +295,9 @@ const inbound: InboundTable = {
       // packages/skills (e.g. ones installed since the last session started). Drop the stale
       // command cache so the slash palette reflects this runtime's commands.
       invalidateCommands();
+      // The context-chip attach toggle was a decision for the PREVIOUS conversation —
+      // don't let it silently append references to prompts in this one.
+      resetContextInclude();
       resetScrollFollowing();
       scheduleRender();
     }

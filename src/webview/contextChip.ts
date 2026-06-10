@@ -38,6 +38,15 @@ export function toggleContextInclude(): void {
   renderChip();
 }
 
+/** Switching to a DIFFERENT session detaches the reference: the toggle was a decision
+ *  made for the previous conversation and must not silently follow into this one.
+ *  (The editor context itself is global — the chip stays visible, just unlit.) */
+export function resetContextInclude(): void {
+  if (!include) return;
+  include = false;
+  renderChip();
+}
+
 function renderChip(): void {
   const label = formatContextLabel(current);
   if (!label) {
