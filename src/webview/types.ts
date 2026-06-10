@@ -20,8 +20,12 @@ export interface ActivityStep {
   /** Set on a generation checkpoint node: tokens/cost that model call spent. */
   tokens?: number;
   cost?: number;
-  /** Marks a model-generation checkpoint or a thinking block (vs a tool step). */
-  kind?: "generation" | "thinking";
+  /** Marks a model-generation checkpoint, a thinking block, or a demoted narration
+   *  text segment (vs a tool step). */
+  kind?: "generation" | "thinking" | "text";
+  /** kind === "text" only: intermediate narration markdown demoted from the bubble at a
+   *  toolUse boundary. IMMUTABLE after creation (safe to fold its length into render keys). */
+  text?: string;
   /** kind === "thinking" only: the accumulated reasoning text. VOLATILE for rendering —
    *  must stay out of the message render key (the live painter updates it per frame). */
   thinkingText?: string;
@@ -73,6 +77,9 @@ export interface UiMessage {
   /** This turn was cut off (user pressed Stop, or VS Code closed mid-turn) — renders an
    *  inline "Interrupted" marker below the turn. */
   interrupted?: boolean;
+  /** User message sent mid-run, still waiting in pi's steer/follow-up queue — renders
+   *  dimmed with a "Queued" chip until pi echoes its message_start. */
+  pending?: boolean;
 }
 
 export interface AppState {

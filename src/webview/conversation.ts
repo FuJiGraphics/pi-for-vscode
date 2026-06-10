@@ -52,8 +52,10 @@ export function ensureAssistant(): UiMessage {
     const existing = getMessage(state.currentAssistantId);
     if (existing) return existing;
   }
+  // Activities default EXPANDED: the work stays visible after the turn completes (the
+  // header toggle collapses it) — "all steps visible" is the design baseline.
   const message = addMessage("assistant", "", {
-    activity: state.running ? { startedAt: Date.now(), endedAt: null, expanded: false, steps: [] } : undefined,
+    activity: state.running ? { startedAt: Date.now(), endedAt: null, expanded: true, steps: [] } : undefined,
   });
   message.revealed = 0;
   state.currentAssistantId = message.id;
@@ -62,7 +64,7 @@ export function ensureAssistant(): UiMessage {
 
 export function ensureActivity(): Activity {
   const message = ensureAssistant();
-  if (!message.activity) message.activity = { startedAt: Date.now(), endedAt: null, expanded: false, steps: [] };
+  if (!message.activity) message.activity = { startedAt: Date.now(), endedAt: null, expanded: true, steps: [] };
   return message.activity;
 }
 

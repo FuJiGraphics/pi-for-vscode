@@ -15,6 +15,7 @@ import { escapeHtml, formatTime, formatDuration, roleLabel } from "./util";
 import { renderMarkdown } from "./markdown";
 import { cardFor, effectiveExpanded, isCardCollapsible, stepDetail, timelineRow, tokCost } from "./cards";
 import { deriveTodos, isTodoStep, todoCardHtml } from "./cardsTodo";
+import { isTextStep, textStepRowHtml } from "./textSteps";
 import { isThinkingStep, lastRunningThinkingStep, liveThinkingTail } from "./thinkingSteps";
 import { statusTaskText } from "./statusLine";
 import { thinkingLabel } from "./spinner";
@@ -153,6 +154,10 @@ function stepsRowsHtml(activity: Activity): string {
       if (index === lastTodoIndex) rows.push(todoCardHtml(todos));
       return;
     }
+    if (isTextStep(step)) {
+      rows.push(textStepRowHtml(step));
+      return;
+    }
     rows.push(timelineRow({
       id: step.id,
       status: step.status,
@@ -210,6 +215,14 @@ function statusHeaderInner(message: UiMessage, mode: "spinner" | "working" | "do
   }
   const dot = mode === "working" ? '<span class="activity-working-dot"></span>' : "";
   const label = mode === "working" ? "Working" : doneLabel(message);
+  if (mode === "working") {
+    // The live task chip ("Read · cards.ts" / "Thinking… <tail>") sits in its own span so
+    // paintLiveMessage can update it per frame without rebuilding the header.
+    return (
+      dot + "<span>" + escapeHtml(label) + '</span><span class="status-task">' +
+      escapeHtml(statusTaskText(message)) + "</span>"
+    );
+  }
   // Join the present fragments with one middot rather than baking a leading " · " into each.
   // statusTaskText falls back to "N steps" when nothing is actively running (always, in done mode).
   return dot + "<span>" + escapeHtml([label, statusTaskText(message), usageChip(message)].filter(Boolean).join(SEP)) + "</span>";
@@ -236,8 +249,10 @@ function assistantStatusHtml(message: UiMessage): string {
   const steps = activity?.steps ?? [];
 
   // While the turn is active the timeline stays expanded so progress reads as a live
-  // connected graph; once done it collapses (respecting the user's manual toggle).
-  if (active && !message.text) return statusBlock(message, "spinner", true);
+  // connected graph. Spinner mode only at the true turn start (no steps yet) — once any
+  // step exists the header is "working"; otherwise each toolUse demotion (text → "")
+  // would bounce the header back to the giant spinner mid-turn.
+  if (active && !message.text && steps.length === 0) return statusBlock(message, "spinner", true);
   if (!activity) return "";
   if (active && steps.length === 0) return ""; // streaming text with no tools → no header line
   return statusBlock(message, active ? "working" : "done", active ? true : !!activity.expanded);
@@ -346,7 +361,9 @@ export function messageRenderKey(message: UiMessage): string {
   const activity = message.activity;
   const stepsSig = activity
     ? activity.steps
-        .map((s) => s.id + "|" + s.status + "|" + s.label + "|" + (s.tool || "") + "|" + s.detail + "|" + (s.output ? "O" : "") + (effectiveExpanded(s) ? "X" : ""))
+        // Narration steps fold only their LENGTH (immutable after creation; never the body —
+        // sig strings must stay small).
+        .map((s) => s.id + "|" + s.status + "|" + s.label + "|" + (s.tool || "") + "|" + s.detail + "|" + (s.output ? "O" : "") + (effectiveExpanded(s) ? "X" : "") + (s.kind === "text" ? "T" + (s.text?.length || 0) : ""))
         .join(";") +
       "#" + activity.steps.length + (activity.expanded ? "E" : "") + (activity.endedAt ? "D" : "") + "@" + highlightVersion
     : "";
@@ -407,9 +424,9 @@ export function paintLiveMessage(): void {
   if (!message) return;
   const followLatest = shouldFollowLatest();
 
-  if (state.running && !message.text) {
-    // The block pi (CSS-animated) needs no per-frame work. Re-render the pixel
-    // word banner only when the word changes (so the rain replays), tick seconds.
+  if (state.running) {
+    // Header leaves: the spinner-mode pixel word/seconds (absent in working mode — the
+    // querySelector just misses) and the .status-task chip, which BOTH modes carry.
     const { word, seconds } = thinkingLabel(message.createdAt);
     const wordEl = node.querySelector(".pixel-word");
     if (wordEl && wordEl.getAttribute("data-word") !== word) {
@@ -418,7 +435,8 @@ export function paintLiveMessage(): void {
     }
     setText(node, ".think-time", seconds > 0 ? seconds + "s" : "");
     setText(node, ".status-task", statusTaskText(message));
-  } else if (message.text) {
+  }
+  if (message.text) {
     const bubble = node.querySelector(".bubble");
     if (bubble) {
       const streaming = isStreaming(message);

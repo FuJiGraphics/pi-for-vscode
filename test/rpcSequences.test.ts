@@ -8,6 +8,7 @@ import { state, activateSession } from "../src/webview/state";
 import { addMessage, hydrateSessionMessages, setRunning } from "../src/webview/conversation";
 import { handleRpcEvent } from "../src/webview/handlers";
 import { isThinkingStep } from "../src/webview/thinkingSteps";
+import { isTextStep } from "../src/webview/textSteps";
 import { messageRenderKey } from "../src/webview/render";
 
 // Mimic the composer send path (input.ts submitInput): a prompt sent while idle detaches the
@@ -30,6 +31,8 @@ const ev = {
   asstStart: () => ({ type: "message_start", message: { role: "assistant", content: "" } }),
   delta: (delta: string) => ({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta } }),
   asstEnd: (content: string) => ({ type: "message_end", message: { role: "assistant", content } }),
+  // Full-shape message_end: content blocks + stopReason + usage, as pi actually sends them.
+  asstEndRaw: (message: Record<string, unknown>) => ({ type: "message_end", message: { role: "assistant", ...message } }),
   asstError: (errorMessage: string) => ({ type: "message_end", message: { role: "assistant", errorMessage } }),
   toolStart: (id: string, name: string) => ({ type: "tool_execution_start", toolCallId: id, toolName: name, args: {} }),
   toolEnd: (id: string, name: string) => ({ type: "tool_execution_end", toolCallId: id, toolName: name }),
@@ -278,6 +281,80 @@ test("Q. render-key stability: streaming thinking text does NOT change the struc
   assert.equal(messageRenderKey(message), before); // deltas → same key, painter-only update
   replay([think.end()]);
   assert.notEqual(messageRenderKey(message), before); // status/label flip → one rebuild
+});
+
+// ---- text interleave (narration demotion at toolUse boundaries) ----
+
+test("R. multi-call turn: narration demotes into the timeline BEFORE its tool steps; final answer stays in the bubble", () => {
+  fresh();
+  sendUser("fix the bug");
+  replay([
+    ev.agentStart(), ev.userStart("fix the bug"),
+    ev.delta("I'll check the config first."),
+    ev.asstEndRaw({
+      content: [{ type: "text", text: "I'll check the config first." }, { type: "toolCall", id: "t1", name: "read", arguments: {} }],
+      stopReason: "toolUse",
+      usage: { totalTokens: 100, cost: { total: 0.01 } },
+    }),
+    ev.toolStart("t1", "read"), ev.toolEnd("t1", "read"),
+    ev.delta("Found it. Fixing now."),
+    ev.asstEndRaw({
+      content: [{ type: "text", text: "Found it. Fixing now." }, { type: "toolCall", id: "t2", name: "edit", arguments: {} }],
+      stopReason: "toolUse",
+    }),
+    ev.toolStart("t2", "edit"), ev.toolEnd("t2", "edit"),
+    ev.delta("Fixed."),
+    ev.asstEndRaw({ content: [{ type: "text", text: "Fixed the bug." }], stopReason: "stop" }),
+    ev.agentEnd(),
+  ]);
+  const a = assistants()[0];
+  assert.equal(a.text, "Fixed the bug."); // final answer only — narration did NOT concatenate/overwrite
+  const steps = a.activity?.steps ?? [];
+  const flow = steps.map((s) => (isTextStep(s) ? "text:" + s.text : s.kind === "generation" ? "gen" : s.id));
+  // narration → generation checkpoint → its tool; second narration (no usage) → its tool
+  assert.deepEqual(flow, [
+    "text:I'll check the config first.", "gen", "t1",
+    "text:Found it. Fixing now.", "t2",
+  ]);
+});
+
+test("S. render-key stability: intermediate streaming deltas don't change the key; the toolUse demotion changes it once", () => {
+  fresh();
+  sendUser("go");
+  replay([ev.agentStart(), ev.userStart("go"), ev.delta("Let me ")]);
+  const message = assistants()[0];
+  const before = messageRenderKey(message);
+  replay([ev.delta("look "), ev.delta("around. ")]);
+  assert.equal(messageRenderKey(message), before); // streamed bubble text is excluded from the key
+  replay([ev.asstEndRaw({ content: [{ type: "text", text: "Let me look around." }, { type: "toolCall", id: "t1", name: "grep", arguments: {} }], stopReason: "toolUse" })]);
+  assert.notEqual(messageRenderKey(message), before); // one structural flip: new text step + hasText=false
+});
+
+test("T. lost message_end fallback: a tool_execution_start with text still in the bubble demotes it first", () => {
+  fresh();
+  sendUser("go");
+  replay([
+    ev.agentStart(), ev.userStart("go"),
+    ev.delta("Scanning files."),
+    // pi's message_end{toolUse} was lost to a reconnect — the tool event arrives directly.
+    ev.toolStart("t1", "grep"), ev.toolEnd("t1", "grep"),
+    ev.asstEndRaw({ content: [{ type: "text", text: "Done." }], stopReason: "stop" }),
+    ev.agentEnd(),
+  ]);
+  const a = assistants()[0];
+  const steps = a.activity?.steps ?? [];
+  assert.deepEqual(steps.map((s) => (isTextStep(s) ? "text:" + s.text : s.id)), ["text:Scanning files.", "t1"]);
+  assert.equal(a.text, "Done.");
+});
+
+test("U. Stop mid-narration does NOT demote: the partial bubble text survives as the turn's text", () => {
+  fresh();
+  sendUser("go");
+  replay([ev.agentStart(), ev.userStart("go"), ev.delta("I was about to")]);
+  setRunning(false); // Stop
+  const a = assistants()[0];
+  assert.equal(a.text, "I was about to");
+  assert.equal((a.activity?.steps ?? []).filter(isTextStep).length, 0);
 });
 
 test("K. queue_update drives the queued-sends count (steering + followUp) and clears on drain", () => {

@@ -601,6 +601,20 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .tl-gen .tl-node { background: var(--bg); box-shadow: 0 0 0 1.5px var(--accent); }
 .tl-gen .tl-label { color: var(--muted); }
 
+/* Narration node: intermediate assistant text demoted into the timeline at a toolUse
+   boundary — reads as conversation text on the rail (Claude-style chronological flow). */
+.tl-text { padding: 4px 0; }
+.tl-text .tl-md {
+  grid-column: 2;
+  min-width: 0;
+  color: var(--fg);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.tl-text .tl-md > :first-child { margin-top: 0; }
+.tl-text .tl-md > :last-child { margin-bottom: 0; }
+
 /* Rich card body below a timeline row (Edit diff, Write preview, Read content, todos). */
 .tl-card {
   grid-column: 1 / -1;

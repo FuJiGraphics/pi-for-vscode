@@ -17,6 +17,7 @@ import { closeExchangeBoundary } from "./turnBoundary";
 import { flashConnectionNotice } from "./connectionBanner";
 import { ensureAnimating } from "./animator";
 import { applyThinkingEvent } from "./thinkingSteps";
+import { demoteAssistantText } from "./textSteps";
 
 export { handleExtensionUiRequest } from "./extensionUi";
 
@@ -88,8 +89,8 @@ export function handleRpcEvent(event: any): void {
       if (!state.running) break;
       const message = event.message;
       if (message && message.role === "assistant") {
-        recordUsage(message.usage);
         if (message.errorMessage) {
+          recordUsage(message.usage);
           const text = formatTurnError(message.errorMessage);
           if (TRANSIENT_DISCONNECT_RE.test(text)) {
             flashConnectionNotice("Connection interrupted - the turn was paused. Continue when ready.");
@@ -99,7 +100,22 @@ export function handleRpcEvent(event: any): void {
           setRunning(false);
           break;
         }
-        const text = textFromContent(message.content);
+        // An intermediate message (more tool calls follow) demotes its narration text into
+        // the timeline BEFORE recordUsage, so the steps read: narration → generation
+        // checkpoint → the tool steps pi emits next. stopReason "toolUse" is the primary
+        // signal; toolCall content blocks are the provider-robust fallback.
+        const content = message.content;
+        const intermediate =
+          message.stopReason === "toolUse" ||
+          (Array.isArray(content) && content.some((b: any) => b && typeof b === "object" && b.type === "toolCall"));
+        if (intermediate) {
+          demoteAssistantText(ensureAssistant(), textFromContent(content));
+          recordUsage(message.usage);
+          scheduleRender();
+          break;
+        }
+        recordUsage(message.usage);
+        const text = textFromContent(content);
         if (text) {
           const current = ensureAssistant();
           current.text = text;
@@ -112,8 +128,13 @@ export function handleRpcEvent(event: any): void {
       }
       break;
     }
-    case "tool_execution_start":
+    case "tool_execution_start": {
       if (!state.running) break;
+      // message_end{toolUse} normally demoted the narration already; if that event was lost
+      // (mid-stream reconnect) the bubble still holds text here — demote it now so the
+      // narration still precedes its tool step.
+      const current = ensureAssistant();
+      if (current.text) demoteAssistantText(current, current.text);
       recordActivity(
         event.toolCallId,
         prettifyToolName(event.toolName),
@@ -123,6 +144,7 @@ export function handleRpcEvent(event: any): void {
         typeof event.toolName === "string" ? event.toolName : undefined,
       );
       break;
+    }
     case "tool_execution_update":
       if (!state.running) break;
       recordActivity(event.toolCallId, prettifyToolName(event.toolName), "", "running");
