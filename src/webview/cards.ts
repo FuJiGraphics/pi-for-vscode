@@ -4,6 +4,8 @@
 // adding a new tool card is a one-line registry entry. render.ts owns the DOM/paint side.
 import { escapeHtml, formatTokens, formatCost } from "./util";
 import { highlightToLines, langForPath } from "./highlight";
+import { thinkingCardHtml } from "./cardsThinking";
+import { isThinkingStep, thinkingPreview } from "./thinkingSteps";
 import type { ActivityStep } from "./types";
 
 // Shorten a step detail for the timeline: file paths collapse to their basename,
@@ -46,6 +48,9 @@ function webUrl(input: Record<string, unknown>): string {
 // Bash shows the command, Edit/Write the file, web tools the query/URL. Falls back to
 // the summarized detail for other tools.
 export function stepDetail(step: ActivityStep): string {
+  // A collapsed "Thought for Xs" row shows the first thinking line as its detail; while
+  // streaming the live card body already shows the text, so no detail.
+  if (isThinkingStep(step)) return step.status === "done" && !step.redacted ? thinkingPreview(step, "first") : "";
   const input = step.input || {};
   const t = toolName(step);
   if (t === "read" && typeof input.path === "string" && input.path) {
@@ -241,17 +246,22 @@ const DEFAULT_EXPANDED_CARDS = new Set(["edit", "write"]);
 
 /** The card body for a step's tool, or "" when the tool has none. */
 export function cardFor(step: ActivityStep): string {
+  if (isThinkingStep(step)) return thinkingCardHtml(step);
   const render = CARD_RENDERERS[toolName(step)];
   return render ? render(step) : "";
 }
 
 /** Whether this step's card is collapsible behind the row's expand chevron. */
 export function isCardCollapsible(step: ActivityStep): boolean {
+  if (isThinkingStep(step)) return true;
   return COLLAPSIBLE_CARDS.has(toolName(step));
 }
 
 /** A collapsible card's open state when the user hasn't toggled it yet. */
 export function cardDefaultExpanded(step: ActivityStep): boolean {
+  // Thinking streams open (Claude-style live reasoning), then auto-collapses on end;
+  // an explicit user toggle still wins via effectiveExpanded.
+  if (isThinkingStep(step)) return step.status === "running";
   return DEFAULT_EXPANDED_CARDS.has(toolName(step));
 }
 

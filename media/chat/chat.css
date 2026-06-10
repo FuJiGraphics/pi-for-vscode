@@ -404,6 +404,16 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 }
 .think-time { color: var(--subtle); font-size: var(--fs-meta); }
 .status-steps { color: var(--subtle); font-weight: 400; margin-left: 6px; }
+/* The "current work" chip in the spinner header: Read · cards.ts / Thinking… <last line>. */
+.status-task {
+  color: var(--subtle);
+  font-weight: 400;
+  margin-left: 6px;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .stream-cursor {
   display: inline-block;
   width: 7px;
@@ -617,9 +627,34 @@ button:disabled { opacity: .42; cursor: not-allowed; }
               0 0 10px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 /* A clipped card fades at the bottom to hint "more below — expand to read it all". */
-.tl-diff.is-overflowing, .tl-write.is-overflowing, .tl-read.is-overflowing {
+.tl-diff.is-overflowing, .tl-write.is-overflowing, .tl-read.is-overflowing,
+.tl-thinking.is-overflowing {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
   mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+}
+/* Thinking card: the reasoning stream as dim italic plaintext (Claude-style). */
+.tl-thinking {
+  padding: 5px 10px;
+  max-height: 280px;
+  overflow: hidden; /* same contract as code cards: clip inline, ⤢ opens the overlay */
+  color: var(--subtle);
+  font-style: italic;
+  font-size: var(--fs-meta);
+  line-height: 1.55;
+}
+.tl-thinking .thinking-text { white-space: pre-wrap; word-break: break-word; }
+/* While streaming: a shorter window anchored to the BOTTOM so the newest text stays
+   visible as the tail grows (flex-end overflows upward; overflow:hidden clips the top),
+   so its overflow fade points UP instead of down. */
+.tl-thinking.live {
+  max-height: 120px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.tl-thinking.live.is-overflowing {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 22px);
+  mask-image: linear-gradient(to bottom, transparent, #000 22px);
 }
 .tl-expand {
   position: absolute;
@@ -705,7 +740,8 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 }
 /* In the overlay the card fills the scroll area: no inline clip, glow, fade, or expand button. */
 .card-overlay .tl-card { margin: 0; border-radius: 0; box-shadow: none; }
-.card-overlay .tl-diff, .card-overlay .tl-write, .card-overlay .tl-read {
+.card-overlay .tl-diff, .card-overlay .tl-write, .card-overlay .tl-read,
+.card-overlay .tl-thinking {
   max-height: none;
   overflow: visible;
   -webkit-mask-image: none;

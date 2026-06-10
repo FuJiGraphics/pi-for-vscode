@@ -108,6 +108,20 @@ test("isCardCollapsible: read/edit/write cards all collapse behind the row chevr
   assert.equal(isCardCollapsible(step({ tool: "bash" })), false);
 });
 
+test("thinking steps route through the card layer: open while streaming, collapsed once done", () => {
+  const running = step({ kind: "thinking", status: "running", thinkingText: "reasoning…" });
+  const done = step({ kind: "thinking", status: "done", thinkingText: "first line\nsecond line", label: "Thought for 4s" });
+  assert.match(cardFor(running), /tl-thinking live/);
+  assert.match(cardFor(done), /tl-thinking/);
+  assert.equal(isCardCollapsible(running), true);
+  assert.equal(cardDefaultExpanded(running), true); // live reasoning visible
+  assert.equal(cardDefaultExpanded(done), false); // auto-collapse on end
+  assert.equal(effectiveExpanded({ ...done, expanded: true }), true); // user toggle wins
+  assert.equal(stepDetail(done), "first line"); // collapsed row preview
+  assert.equal(stepDetail(running), ""); // live card shows the text itself
+  assert.equal(stepDetail(step({ kind: "thinking", status: "done", thinkingText: "x", redacted: true })), "");
+});
+
 test("cardDefaultExpanded/effectiveExpanded: Edit/Write open by default, Read collapses; explicit toggle wins", () => {
   // Default-open state (no explicit toggle yet): the change-bearing cards show, Read hides.
   assert.equal(cardDefaultExpanded(step({ tool: "edit" })), true);

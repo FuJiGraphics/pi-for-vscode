@@ -20,8 +20,13 @@ export interface ActivityStep {
   /** Set on a generation checkpoint node: tokens/cost that model call spent. */
   tokens?: number;
   cost?: number;
-  /** Marks a model-generation checkpoint (vs a tool step) for distinct rendering. */
-  kind?: "generation";
+  /** Marks a model-generation checkpoint or a thinking block (vs a tool step). */
+  kind?: "generation" | "thinking";
+  /** kind === "thinking" only: the accumulated reasoning text. VOLATILE for rendering —
+   *  must stay out of the message render key (the live painter updates it per frame). */
+  thinkingText?: string;
+  /** kind === "thinking" only: pi sent a redacted_thinking block. */
+  redacted?: boolean;
   /** Raw pi tool name (e.g. "edit", "write", "web_search", "todo") — the prettified verb
    *  in `label` collapses several tools to one word, so card rendering keys off this. */
   tool?: string;

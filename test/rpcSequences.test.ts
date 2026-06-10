@@ -5,8 +5,10 @@ import assert from "node:assert/strict";
 import "./_bridgeStub";
 import "./_domStub";
 import { state, activateSession } from "../src/webview/state";
-import { addMessage, setRunning } from "../src/webview/conversation";
+import { addMessage, hydrateSessionMessages, setRunning } from "../src/webview/conversation";
 import { handleRpcEvent } from "../src/webview/handlers";
+import { isThinkingStep } from "../src/webview/thinkingSteps";
+import { messageRenderKey } from "../src/webview/render";
 
 // Mimic the composer send path (input.ts submitInput): a prompt sent while idle detaches the
 // previous bubble and OPTIMISTICALLY enters the working state (spinner shows instantly, before
@@ -190,6 +192,92 @@ test("J. optimistic then real stream: agent_start is idempotent, no duplicate bu
   assert.deepEqual(shape(), [["user", "go"], ["assistant", "OK."]]);
   assert.equal(assistants().length, 1); // reused the optimistic bubble, did not stack a second
   assert.equal(assistants()[0].id, optimisticId);
+});
+
+const think = {
+  start: () => ({ type: "message_update", assistantMessageEvent: { type: "thinking_start", contentIndex: 0 } }),
+  delta: (delta: string) => ({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta } }),
+  end: (partial?: unknown) => ({ type: "message_update", assistantMessageEvent: { type: "thinking_end", contentIndex: 0, partial } }),
+};
+
+test("L. thinking deltas land in a timeline step and never pollute the bubble text", () => {
+  fresh();
+  sendUser("why?");
+  replay([ev.agentStart(), ev.userStart("why?"), think.start(), think.delta("hmm "), think.delta("because")]);
+  const a = assistants()[0];
+  assert.equal(a.text, ""); // bubble untouched
+  const steps = a.activity?.steps ?? [];
+  assert.equal(steps.filter(isThinkingStep).length, 1);
+  assert.equal(steps[0].thinkingText, "hmm because");
+  assert.equal(steps[0].status, "running");
+  replay([think.end(), ev.delta("Answer."), ev.asstEnd("Answer."), ev.agentEnd()]);
+  assert.equal(steps[0].status, "done");
+  assert.deepEqual(shape(), [["user", "why?"], ["assistant", "Answer."]]);
+});
+
+test("M. thinking and tool steps interleave in arrival order", () => {
+  fresh();
+  sendUser("do");
+  replay([
+    ev.agentStart(), ev.userStart("do"),
+    think.start(), think.delta("plan"), think.end(),
+    ev.toolStart("t1", "read"), ev.toolEnd("t1", "read"),
+    think.start(), think.delta("verify"), think.end(),
+    ev.asstEnd("Done."), ev.agentEnd(),
+  ]);
+  const kinds = (assistants()[0].activity?.steps ?? []).map((s) => (isThinkingStep(s) ? "think" : s.id));
+  assert.deepEqual(kinds, ["think", "t1", "think"]);
+});
+
+test("N. idle guard: thinking events while not running are dropped", () => {
+  fresh();
+  replay([think.start(), think.delta("stray")]);
+  assert.equal(state.messages.length, 0);
+});
+
+test("O. Stop mid-thinking finalizes the step with its partial text", () => {
+  fresh();
+  sendUser("go");
+  replay([ev.agentStart(), ev.userStart("go"), think.start(), think.delta("cut off")]);
+  setRunning(false); // Stop path
+  const steps = assistants()[0].activity?.steps ?? [];
+  assert.equal(steps[0].status, "done");
+  assert.equal(steps[0].thinkingText, "cut off");
+});
+
+test("P. hydrate restores thinking blocks as collapsed steps (thinking-only message survives)", () => {
+  fresh();
+  hydrateSessionMessages([
+    { role: "user", content: "q", timestamp: 1 },
+    {
+      role: "assistant",
+      timestamp: 2,
+      content: [
+        { type: "thinking", thinking: "stored reasoning" },
+        { type: "text", text: "answer" },
+      ],
+    },
+    { role: "assistant", timestamp: 3, content: [{ type: "thinking", thinking: "[Reasoning redacted]", redacted: true }] },
+  ]);
+  assert.deepEqual(shape(), [["user", "q"], ["assistant", "answer"], ["assistant", ""]]);
+  const first = assistants()[0].activity?.steps ?? [];
+  assert.equal(first.length, 1);
+  assert.equal(first[0].thinkingText, "stored reasoning");
+  assert.equal(first[0].status, "done");
+  const second = assistants()[1].activity?.steps ?? [];
+  assert.equal(second[0].redacted, true);
+});
+
+test("Q. render-key stability: streaming thinking text does NOT change the structural key", () => {
+  fresh();
+  sendUser("k");
+  replay([ev.agentStart(), ev.userStart("k"), think.start(), think.delta("a")]);
+  const message = assistants()[0];
+  const before = messageRenderKey(message);
+  replay([think.delta("bcdefgh"), think.delta("more text streaming in")]);
+  assert.equal(messageRenderKey(message), before); // deltas → same key, painter-only update
+  replay([think.end()]);
+  assert.notEqual(messageRenderKey(message), before); // status/label flip → one rebuild
 });
 
 test("K. queue_update drives the queued-sends count (steering + followUp) and clears on drain", () => {

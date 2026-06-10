@@ -15,12 +15,14 @@ import { escapeHtml, formatTime, formatDuration, roleLabel } from "./util";
 import { renderMarkdown } from "./markdown";
 import { cardFor, effectiveExpanded, isCardCollapsible, stepDetail, timelineRow, tokCost } from "./cards";
 import { deriveTodos, isTodoStep, todoCardHtml } from "./cardsTodo";
+import { isThinkingStep, lastRunningThinkingStep, liveThinkingTail } from "./thinkingSteps";
+import { statusTaskText } from "./statusLine";
 import { thinkingLabel } from "./spinner";
 import { piMarkHtml } from "./piMark";
 import { pixelWordHtml } from "./pixelFont";
 import { applyLatestScroll, shouldFollowLatest } from "./scroll";
 import { hasPendingImageAttachments, imageDataUrl, imageMeta } from "./attachments";
-import type { Activity, ActivityStep, UiImageAttachment, UiMessage } from "./types";
+import type { Activity, UiImageAttachment, UiMessage } from "./types";
 
 let renderQueued = false;
 let emptyRendered = false;
@@ -34,6 +36,7 @@ const renderKeys = new WeakMap<HTMLElement, string>();
 // while bounding parses to ~length/STEP instead of one per frame.
 const STREAM_RENDER_STEP = 8;
 const liveRenderedLen = new WeakMap<Element, number>();
+const liveThinkLen = new WeakMap<Element, number>();
 
 // Bumped when the Shiki highlighter becomes ready or the theme changes. Folded into the step
 // render key (stepsSig) so the timeline nodes — whose card HTML now differs — are rebuilt; a
@@ -128,8 +131,10 @@ function stepsRowsHtml(activity: Activity): string {
   const steps = activity.steps;
   const rows: string[] = [];
   // Lead "Thought for Xs" node — the time spent before the first step ran (Claude-style).
+  // Suppressed when real thinking steps exist: they carry their own timed rows, and the
+  // synthetic lead would double-count the same seconds.
   const firstStart = steps.length ? steps[0].startedAt : activity.endedAt || Date.now();
-  if (firstStart - activity.startedAt >= 1500) {
+  if (firstStart - activity.startedAt >= 1500 && !steps.some(isThinkingStep)) {
     rows.push(timelineRow({ status: "done", label: "Thought for " + formatDuration(activity.startedAt, firstStart) }));
   }
   if (!steps.length) {
@@ -153,7 +158,8 @@ function stepsRowsHtml(activity: Activity): string {
       status: step.status,
       label: step.label,
       detail: stepDetail(step),
-      time: step.endedAt ? formatDuration(step.startedAt, step.endedAt) : "",
+      // A done thinking row's label already reads "Thought for Xs" — a time chip would repeat it.
+      time: step.endedAt && !isThinkingStep(step) ? formatDuration(step.startedAt, step.endedAt) : "",
       tokens: step.tokens,
       cost: step.cost,
       gen: step.kind === "generation",
@@ -174,8 +180,18 @@ function usageChip(message: UiMessage): string {
   return message.tokens ? tokCost(message.tokens, message.cost) : "";
 }
 
-function statusHeaderInner(message: UiMessage, mode: "spinner" | "working" | "done", steps: ActivityStep[]): string {
-  const stepCount = steps.length ? steps.length + " step" + (steps.length > 1 ? "s" : "") : "";
+// Done-mode header label. A session-restored thinking-only turn has no real duration data
+// (startedAt === endedAt), where "Worked for 0s" would read wrong — abbreviate to "Thought".
+function doneLabel(message: UiMessage): string {
+  const activity = message.activity;
+  const steps = activity?.steps ?? [];
+  if (activity && steps.length > 0 && steps.every(isThinkingStep) && activity.endedAt === activity.startedAt) {
+    return "Thought";
+  }
+  return "Worked for " + formatDuration(activity?.startedAt, activity?.endedAt);
+}
+
+function statusHeaderInner(message: UiMessage, mode: "spinner" | "working" | "done"): string {
   if (mode === "spinner") {
     const { word, seconds } = thinkingLabel(message.createdAt);
     return (
@@ -187,16 +203,16 @@ function statusHeaderInner(message: UiMessage, mode: "spinner" | "working" | "do
       '</span><span class="think-time">' +
       (seconds > 0 ? seconds + "s" : "") +
       "</span>" +
-      (steps.length ? '<span class="status-steps">' + escapeHtml(stepCount) + "</span>" : "")
+      // Always present (even empty) so paintLiveMessage can update it in place per frame:
+      // the current work ("Read · cards.ts" / "Thinking… <last line>") or the step count.
+      '<span class="status-task">' + escapeHtml(statusTaskText(message)) + "</span>"
     );
   }
   const dot = mode === "working" ? '<span class="activity-working-dot"></span>' : "";
-  const label =
-    mode === "working"
-      ? "Working"
-      : "Worked for " + formatDuration(message.activity?.startedAt, message.activity?.endedAt);
+  const label = mode === "working" ? "Working" : doneLabel(message);
   // Join the present fragments with one middot rather than baking a leading " · " into each.
-  return dot + "<span>" + escapeHtml([label, stepCount, usageChip(message)].filter(Boolean).join(SEP)) + "</span>";
+  // statusTaskText falls back to "N steps" when nothing is actively running (always, in done mode).
+  return dot + "<span>" + escapeHtml([label, statusTaskText(message), usageChip(message)].filter(Boolean).join(SEP)) + "</span>";
 }
 
 function statusBlock(message: UiMessage, mode: "spinner" | "working" | "done", expanded: boolean): string {
@@ -204,7 +220,7 @@ function statusBlock(message: UiMessage, mode: "spinner" | "working" | "done", e
   const steps = activity?.steps ?? [];
   const hasSteps = steps.length > 0;
   const classes = "activity status-line" + (mode === "spinner" ? " spinner" : "") + (expanded ? " expanded" : "");
-  const inner = statusHeaderInner(message, mode, steps);
+  const inner = statusHeaderInner(message, mode);
   const chevron = hasSteps ? '<span class="activity-chevron">›</span>' : "";
   const open = hasSteps
     ? '<button class="activity-toggle" data-action="toggle-activity" data-id="' + message.id + '">'
@@ -322,7 +338,10 @@ function messageHtml(message: UiMessage): string {
 // glyph/word/seconds) so streaming/thinking does NOT rebuild the node each frame.
 // Assistant text is excluded too (the painter fills the bubble); the final full
 // text lands when `live` flips false and the node is rebuilt once.
-function messageRenderKey(message: UiMessage): string {
+// step.thinkingText is volatile for the same reason — NEVER fold it into stepsSig
+// (the live painter updates the .thinking-text leaf; thinking_start/end change
+// status/label and rebuild exactly twice per block). Exported for the key-stability test.
+export function messageRenderKey(message: UiMessage): string {
   const active = isActive(message);
   const activity = message.activity;
   const stepsSig = activity
@@ -398,6 +417,7 @@ export function paintLiveMessage(): void {
       wordEl.innerHTML = pixelWordHtml(word);
     }
     setText(node, ".think-time", seconds > 0 ? seconds + "s" : "");
+    setText(node, ".status-task", statusTaskText(message));
   } else if (message.text) {
     const bubble = node.querySelector(".bubble");
     if (bubble) {
@@ -411,6 +431,28 @@ export function paintLiveMessage(): void {
         const shown = streaming ? message.text.slice(0, message.revealed) : message.text;
         bubble.innerHTML = renderMarkdown(shown) + (streaming ? '<span class="stream-cursor"></span>' : "");
         liveRenderedLen.set(bubble, shownLen);
+      }
+    }
+  }
+
+  // Live thinking card: paint the streaming tail as plaintext (no markdown re-parse),
+  // gated by the same char step as the bubble. Independent of the branches above — a
+  // later thinking block streams after bubble text already exists.
+  if (state.running) {
+    const think = lastRunningThinkingStep(message.activity);
+    if (think) {
+      const card = node.querySelector(".tl-thinking.live .thinking-text");
+      if (card) {
+        const len = think.thinkingText?.length ?? 0;
+        const last = liveThinkLen.get(card);
+        if (last === undefined || len - last >= STREAM_RENDER_STEP) {
+          card.textContent = liveThinkingTail(think);
+          liveThinkLen.set(card, len);
+          // The live card grows without structural renders, so keep its overflow fade
+          // (markOverflowingCards' job) in sync here.
+          const root = card.parentElement;
+          if (root) root.classList.toggle("is-overflowing", root.scrollHeight > root.clientHeight + 1);
+        }
       }
     }
   }
@@ -514,7 +556,7 @@ export function render(): void {
 // innerHTML writes to avoid interleaved layout reads.
 function markOverflowingCards(): void {
   for (const node of renderedNodes.values()) {
-    node.querySelectorAll<HTMLElement>(".tl-diff, .tl-write, .tl-read").forEach((card) => {
+    node.querySelectorAll<HTMLElement>(".tl-diff, .tl-write, .tl-read, .tl-thinking").forEach((card) => {
       card.classList.toggle("is-overflowing", card.scrollHeight > card.clientHeight + 1);
     });
   }

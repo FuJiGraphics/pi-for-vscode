@@ -16,6 +16,7 @@ import {
 import { closeExchangeBoundary } from "./turnBoundary";
 import { flashConnectionNotice } from "./connectionBanner";
 import { ensureAnimating } from "./animator";
+import { applyThinkingEvent } from "./thinkingSteps";
 
 export { handleExtensionUiRequest } from "./extensionUi";
 
@@ -56,7 +57,14 @@ export function handleRpcEvent(event: any): void {
     case "message_update": {
       if (!state.running) break;
       const delta = event.assistantMessageEvent;
-      if (delta && delta.type === "text_delta" && delta.delta) appendAssistant(delta.delta);
+      if (!delta) break;
+      if (delta.type === "text_delta" && delta.delta) {
+        appendAssistant(delta.delta);
+      } else if (delta.type === "thinking_start" || delta.type === "thinking_delta" || delta.type === "thinking_end") {
+        applyThinkingEvent(ensureActivity(), delta);
+        ensureAnimating();
+        scheduleRender();
+      }
       break;
     }
     case "message_end": {

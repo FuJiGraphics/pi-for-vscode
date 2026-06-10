@@ -6,6 +6,7 @@
 // prompt, every steering message, and every follow-up (agent-loop.js L50-52, L95-98). This
 // module owns that single concern, kept DOM-free so it is unit-testable under Node.
 import { state } from "./state";
+import { closeOpenThinking } from "./thinkingSteps";
 import type { UiMessage } from "./types";
 
 function find(id: string | null): UiMessage | undefined {
@@ -19,6 +20,7 @@ export function bubbleHasContent(message: UiMessage | undefined): boolean {
 
 function finalize(message: UiMessage): void {
   message.revealed = message.text.length;
+  closeOpenThinking(message.activity); // Stop / agent_end / boundary: no orphan pulsing thinking row
   if (message.activity && !message.activity.endedAt) message.activity.endedAt = Date.now();
 }
 

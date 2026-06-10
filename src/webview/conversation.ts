@@ -6,6 +6,7 @@ import { ensureAnimating } from "./animator";
 import { finalizeOrPrune } from "./turnBoundary";
 import { uid } from "./util";
 import { effectiveExpanded } from "./cards";
+import { thinkingStepFromBlock } from "./thinkingSteps";
 import type { Activity, ActivityStep, UiImageAttachment, UiMessage, UiPrompt, UiRole } from "./types";
 
 export function getMessage(id: string | null | undefined): UiMessage | undefined {
@@ -300,9 +301,23 @@ export function sessionMessageToUi(message: any, index: number): UiMessage | nul
   }
   if (message.role === "assistant") {
     const text = textFromContent(message.content, false).trim();
-    return text
-      ? { id: "session-assistant-" + index + "-" + timestamp, role: "assistant", text, createdAt: timestamp }
-      : null;
+    // Rebuild thinking blocks as collapsed timeline steps so reopened sessions keep them.
+    const thinkingSteps: ActivityStep[] = Array.isArray(message.content)
+      ? (message.content as unknown[])
+          .filter((b): b is Record<string, unknown> => !!b && typeof b === "object" && (b as { type?: unknown }).type === "thinking")
+          .map((b, i) => thinkingStepFromBlock(b, timestamp, i, index))
+          .filter((s) => s.thinkingText || s.redacted)
+      : [];
+    if (!text && thinkingSteps.length === 0) return null;
+    return {
+      id: "session-assistant-" + index + "-" + timestamp,
+      role: "assistant",
+      text,
+      createdAt: timestamp,
+      activity: thinkingSteps.length
+        ? { startedAt: timestamp, endedAt: timestamp, expanded: false, steps: thinkingSteps }
+        : undefined,
+    };
   }
   if (message.role === "custom" && message.display) {
     const text = textFromContent(message.content, true).trim();
