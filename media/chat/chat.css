@@ -1103,7 +1103,7 @@ a:hover { text-decoration: underline; }
   box-shadow: 0 18px 48px var(--shadow), 0 2px 8px var(--shadow);
 }
 .app.history-open .history-panel { display: flex; }
-/* Settings panel (gear): same chrome as the history popover, content-driven. */
+/* Settings panel (gear): header + card sections. */
 .settings-panel {
   position: absolute;
   top: 46px;
@@ -1113,7 +1113,7 @@ a:hover { text-decoration: underline; }
   max-height: min(64vh, 520px);
   display: none;
   flex-direction: column;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--surface);
@@ -1121,27 +1121,54 @@ a:hover { text-decoration: underline; }
   overflow-y: auto;
 }
 .app.settings-open .settings-panel { display: flex; }
-.settings-section-title {
-  margin: 6px 4px 4px;
+.settings-list { display: flex; flex-direction: column; gap: 10px; }
+.settings-head { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 2px; }
+.settings-title { color: var(--fg); font-weight: 700; font-size: var(--fs-body); }
+.settings-close {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--muted);
+  background: none;
+  cursor: pointer;
+}
+.settings-close:hover { color: var(--fg); background: var(--surface-hover); }
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--bg) 55%, var(--surface));
+}
+.settings-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 6px;
   color: var(--muted);
   font-size: var(--fs-micro);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .06em;
 }
-.settings-section-title + .settings-section-title,
-.settings-row + .settings-section-title,
-.settings-note + .settings-section-title,
-.settings-action + .settings-section-title { margin-top: 14px; }
+.settings-card-title svg { color: var(--accent); }
 .settings-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 8px;
+  padding: 6px 7px;
   border-radius: 8px;
   font-size: var(--fs-meta);
 }
+.settings-row:hover { background: var(--surface-hover); }
+.settings-row-icon { flex: none; display: inline-flex; color: var(--muted); }
 .settings-row-name { flex: 1 1 auto; min-width: 0; color: var(--fg); overflow: hidden; text-overflow: ellipsis; }
+.settings-value { flex: none; color: var(--subtle); font-variant-numeric: tabular-nums; }
 .settings-badge {
   flex: none;
   padding: var(--chip-pad);
@@ -1159,15 +1186,32 @@ a:hover { text-decoration: underline; }
   color: var(--muted);
   font-size: var(--fs-micro);
   cursor: pointer;
+  transition: color 130ms ease, border-color 130ms ease, background-color 130ms ease;
 }
 .settings-action:hover { color: var(--fg); background: var(--surface-hover); }
-.settings-action.primary {
-  align-self: flex-start;
-  margin: 6px 8px 2px;
-  color: color-mix(in srgb, var(--accent) 85%, var(--fg));
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+.settings-action.danger:hover {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 50%, var(--border));
+  background: color-mix(in srgb, var(--error) 10%, transparent);
 }
-.settings-note { padding: 6px 8px; color: var(--muted); font-size: var(--fs-meta); line-height: 1.5; }
+.settings-primary {
+  margin-top: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: color-mix(in srgb, var(--accent) 85%, var(--fg));
+  font-weight: 600;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+  transition: background-color 130ms ease;
+}
+.settings-primary:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.settings-note { padding: 4px 7px 6px; color: var(--muted); font-size: var(--fs-meta); line-height: 1.5; }
+/* Gear button: a playful quarter-turn on hover (killed by the reduced-motion guard). */
+#settings svg { transition: transform 220ms ease; }
+#settings:hover svg { transform: rotate(45deg); }
 .history-search {
   flex: 0 0 auto;
   width: 100%;
