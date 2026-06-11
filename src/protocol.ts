@@ -211,6 +211,12 @@ export type WebviewToExtensionMessage =
   | { type: "newSession" }
   | { type: "sessions" }
   | { type: "requestSessions" }
+  // Tab strip: make an OPEN session (live runtime, by runtime id) the visible one. The
+  // path-based switchSession below stays for the history popover (sessions on disk).
+  | { type: "activateSession"; sessionId: string }
+  // Tab strip: close an open session's tab — reaps its runtime (the on-disk session file
+  // survives and remains reopenable from history).
+  | { type: "closeSession"; sessionId: string; activateSessionId?: string }
   | { type: "switchSession"; sessionPath: string }
   | { type: "deleteSession"; sessionPath: string }
   | { type: "renameSession"; sessionPath: string; name: string }

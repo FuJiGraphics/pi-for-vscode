@@ -32,7 +32,6 @@ const ICONS = {
   globe: svg('<circle cx="8" cy="8" r="6"/><path d="M2 8h12"/><path d="M8 2c2 1.8 2 10.2 0 12-2-1.8-2-10.2 0-12z"/>'),
   fetch: svg('<path d="M8 2v7"/><path d="M5 6.5L8 9.5l3-3"/><path d="M2.5 11v2.5h11V11"/>'),
   think: svg('<path d="M8 1.8l1.2 3.4 3.4 1.2-3.4 1.2L8 11l-1.2-3.4L3.4 6.4l3.4-1.2z"/>'),
-  gen: svg('<path d="M8.8 1.5L3.5 9h3.5l-.8 5.5L11.5 7H8z"/>'),
   dots: svg('<circle cx="3.5" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="12.5" cy="8" r="1" fill="currentColor" stroke="none"/>'),
 };
 
@@ -56,11 +55,9 @@ const TOOL_THEMES: Record<string, ToolTheme> = {
 
 const FALLBACK: ToolTheme = { icon: ICONS.dots, tone: "" };
 const THINKING_THEME: ToolTheme = { icon: ICONS.think, tone: "think" };
-const GENERATION_THEME: ToolTheme = { icon: ICONS.gen, tone: "gen" };
 
 export function toolTheme(tool: string | undefined, kind?: ActivityStep["kind"]): ToolTheme {
   if (kind === "thinking") return THINKING_THEME;
-  if (kind === "generation") return GENERATION_THEME;
   if (!tool) return FALLBACK;
   return TOOL_THEMES[tool.toLowerCase()] ?? FALLBACK;
 }

@@ -51,6 +51,73 @@ test("adoptPersistedView restores the crash view; consumeRestored is one-shot", 
   assert.equal(store.adoptPersistedView("rt1", "/f.jsonl"), false); // already consumed
 });
 
+test("openViews lists open sessions in insertion order and never resurrects a dropped one", () => {
+  setPersisted(undefined);
+  const store = new SessionViewStore();
+  store.activateSession("a");
+  store.activeView.sessionName = "alpha";
+  store.activateSession("b");
+  store.withSession("c", () => {});
+  assert.deepEqual(store.openViews().map((v) => v.id), ["a", "b", "c"]);
+  // The active entry reads the LIVE view object.
+  store.activeView.sessionName = "beta";
+  assert.equal(store.openViews().find((v) => v.id === "b")?.view.sessionName, "beta");
+  // Close the active tab (host: dropSession → activate next): the dropped view must not
+  // come back as a zombie when the next activation re-caches the outgoing view.
+  store.dropSession("b");
+  assert.deepEqual(store.openViews().map((v) => v.id), ["a", "c"]);
+  store.activateSession("c");
+  assert.deepEqual(store.openViews().map((v) => v.id), ["a", "c"]);
+});
+
+// Chrome-like tab behavior: closing active selects the right neighbor first; drag/drop only
+// changes the hot-path tab order, never the underlying session contents.
+test("closeSessionTab and moveSessionTab support instant Chrome-style tab UX", () => {
+  setPersisted(undefined);
+  const store = new SessionViewStore();
+  store.activateSession("a");
+  store.activeView.sessionName = "alpha";
+  store.activateSession("b");
+  store.activeView.sessionName = "beta";
+  store.activateSession("c");
+  store.activeView.sessionName = "gamma";
+  assert.deepEqual(store.openViews().map((v) => v.id), ["a", "b", "c"]);
+
+  assert.equal(store.moveSessionTab("c", "a", false), true);
+  assert.deepEqual(store.openViews().map((v) => v.id), ["c", "a", "b"]);
+
+  store.activateSession("a");
+  assert.equal(store.closeSessionTab("a"), "b");
+  assert.equal(store.getActiveSessionId(), "b");
+  assert.equal(store.activeView.sessionName, "beta");
+  assert.deepEqual(store.openViews().map((v) => v.id), ["c", "b"]);
+});
+
+test("sanitizeView drops legacy 'Generated' checkpoint steps from persisted views", () => {
+  setPersisted({
+    activeSessionFile: "/g.jsonl",
+    bySessionFile: {
+      "/g.jsonl": {
+        messages: [
+          {
+            id: "a", role: "assistant", text: "done", createdAt: 1,
+            activity: {
+              startedAt: 1, endedAt: 2, expanded: true,
+              steps: [
+                { id: "t1", label: "Read", detail: "", status: "done", startedAt: 1, tool: "read" },
+                { id: "gen-1", label: "Generated", detail: "", status: "done", startedAt: 1, kind: "generation", tokens: 99 },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  });
+  const store = new SessionViewStore();
+  const steps = store.activeView.messages[0].activity?.steps ?? [];
+  assert.deepEqual(steps.map((s) => s.id), ["t1"]);
+});
+
 test("a mid-turn persisted view is sanitized: running cleared + last assistant interrupted", () => {
   setPersisted({
     activeSessionFile: "/run.jsonl",

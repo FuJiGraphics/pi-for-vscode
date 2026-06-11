@@ -5,7 +5,8 @@
 import { escapeHtml, formatTokens, formatCost } from "./util";
 import { highlightToLines, langForPath } from "./highlight";
 import { thinkingCardHtml } from "./cardsThinking";
-import { isThinkingStep, thinkingPreview } from "./thinkingSteps";
+import { isThinkingStep } from "./thinkingSteps";
+import { normalizeEdits, parsePiDiff, type DiffStats } from "./diffStats";
 import type { ActivityStep } from "./types";
 
 // Shorten a step detail for the timeline: file paths collapse to their basename,
@@ -48,9 +49,11 @@ function webUrl(input: Record<string, unknown>): string {
 // Bash shows the command, Edit/Write the file, web tools the query/URL. Falls back to
 // the summarized detail for other tools.
 export function stepDetail(step: ActivityStep): string {
-  // A collapsed "Thought for Xs" row shows the first thinking line as its detail; while
-  // streaming the live card body already shows the text, so no detail.
-  if (isThinkingStep(step)) return step.status === "done" && !step.redacted ? thinkingPreview(step, "first") : "";
+  // A thinking row carries NO detail: the reasoning must only appear when the row is
+  // clicked open (the .tl-thinking card) — a first-line preview here leaked the thought
+  // into the step row itself. (The live "Thinking… <last line>" header chip is separate
+  // and intentional; see statusLine.ts.)
+  if (isThinkingStep(step)) return "";
   const input = step.input || {};
   const t = toolName(step);
   if (t === "read" && typeof input.path === "string" && input.path) {
@@ -84,28 +87,7 @@ export function stepDetail(step: ActivityStep): string {
 }
 
 // ---- rich card bodies (rendered visible below a timeline row) ----
-
-// Normalize pi's edit args into [{oldText,newText}]: the schema is an `edits` array, but
-// some models send it as a JSON string, and the legacy shape is a flat oldText/newText.
-export function normalizeEdits(input: Record<string, unknown>): Array<{ oldText: string; newText: string }> {
-  let edits: unknown = input.edits;
-  if (typeof edits === "string") {
-    try {
-      edits = JSON.parse(edits);
-    } catch {
-      edits = undefined;
-    }
-  }
-  if (Array.isArray(edits)) {
-    return edits
-      .filter((e): e is Record<string, unknown> => !!e && typeof e === "object")
-      .map((e) => ({ oldText: typeof e.oldText === "string" ? e.oldText : "", newText: typeof e.newText === "string" ? e.newText : "" }));
-  }
-  if (typeof input.oldText === "string" || typeof input.newText === "string") {
-    return [{ oldText: typeof input.oldText === "string" ? input.oldText : "", newText: typeof input.newText === "string" ? input.newText : "" }];
-  }
-  return [];
-}
+// (Diff/edit-args parsing lives in diffStats.ts — shared with the +N/-N badge counts.)
 
 const DIFF_MAX = 40;
 const READ_MAX = 40;
@@ -152,18 +134,6 @@ function openInEditorButton(path: unknown, line?: number): string {
     (typeof line === "number" && line > 0 ? ' data-line="' + line + '"' : "") +
     ' title="Open in editor" aria-label="Open in editor">↗</button>'
   );
-}
-
-// Parse pi's real edit diff (details.diff): lines are "<sign><lineNo> <content>", sign one of
-// space/+/-. Non-matching lines render as neutral context with no number.
-function parsePiDiff(diff: string): Array<{ lineNo: string; sign: " " | "+" | "-"; content: string }> {
-  const out: Array<{ lineNo: string; sign: " " | "+" | "-"; content: string }> = [];
-  for (const line of diff.split("\n")) {
-    const m = /^([ +-])(\d+) ?(.*)$/.exec(line);
-    if (m) out.push({ sign: m[1] as " " | "+" | "-", lineNo: m[2], content: m[3] });
-    else if (line.length) out.push({ sign: " ", lineNo: "", content: line });
-  }
-  return out;
 }
 
 // Edit diff card (HYBRID): once pi's real line-numbered unified diff arrives (step.output.diff),
@@ -291,17 +261,14 @@ export function effectiveExpanded(step: ActivityStep): boolean {
 // ---- timeline row ----
 
 // One node in the Claude-style vertical timeline: a status dot on a connecting rail,
-// the terse verb (Read/Edit/Bash…) with its target, and a trailing chip — the tokens a
-// generation checkpoint spent, or how long a tool step took.
+// the terse verb (Read/Edit/Bash…) with its target, and a trailing chip showing how
+// long a tool step took. (Token usage rolls up in the status header, not per-row.)
 export interface TimelineRow {
   id?: string;
   status: "running" | "done" | "error";
   label: string;
   detail?: string;
   time?: string;
-  tokens?: number;
-  cost?: number;
-  gen?: boolean;
   output?: { text: string; isError: boolean };
   expanded?: boolean;
   /** Rich body (Edit diff / Write preview / Read content), rendered below the row line. */
@@ -312,6 +279,8 @@ export interface TimelineRow {
   tone?: string;
   /** TRUSTED inline-SVG glyph (toolTheme constants only) rendered before the label. */
   icon?: string;
+  /** Added/removed line counts (Edit/Write) — renders the Codex-style "+N -N" badge. */
+  diff?: DiffStats;
 }
 
 // The token/cost pair inside a chip uses a vertical bar so it reads like one compact metric.
@@ -334,14 +303,18 @@ export function usageTitle(usage: { input: number; output: number; cacheRead: nu
   return parts.join(" · ");
 }
 
+// Codex-style "+N -N" badge for Edit/Write rows. Each count carries data-target so the
+// post-reconcile pass (render.ts → counters.ts) can roll it up from the previous value.
+function diffStatHtml(diff: DiffStats | undefined): string {
+  if (!diff || (!diff.added && !diff.removed)) return "";
+  const part = (cls: string, prefix: string, n: number): string =>
+    n ? '<span class="' + cls + '" data-target="' + n + '">' + prefix + n + "</span>" : "";
+  return '<span class="diff-stat">' + part("ds-add", "+", diff.added) + part("ds-del", "-", diff.removed) + "</span>";
+}
+
 export function timelineRow(row: TimelineRow): string {
   const detailHtml = row.detail ? '<span class="tl-detail">' + escapeHtml(shortenDetail(row.detail)) + "</span>" : "";
-  let rightHtml = "";
-  if (row.tokens) {
-    rightHtml = '<span class="tl-tok">' + escapeHtml(tokCost(row.tokens, row.cost)) + "</span>";
-  } else if (row.time) {
-    rightHtml = '<span class="tl-time">' + escapeHtml(row.time) + "</span>";
-  }
+  const rightHtml = row.time ? '<span class="tl-time">' + escapeHtml(row.time) + "</span>" : "";
   // Two kinds of row toggle:
   //  - generic OUTPUT (bash stdout / web result): no rich card → the row toggles a <pre> block.
   //  - collapsible CARD (read-only tools like Read): the row toggles the rich card body.
@@ -357,12 +330,12 @@ export function timelineRow(row: TimelineRow): string {
       : "";
   const cardHtml = row.card ? (collapsibleCard ? (row.expanded ? row.card : "") : row.card) : "";
   const cls =
-    "tl-step tl-" + row.status + (row.gen ? " tl-gen" : "") + (toggleable ? " tl-expandable" : "") + (row.expanded ? " expanded" : "");
+    "tl-step tl-" + row.status + (toggleable ? " tl-expandable" : "") + (row.expanded ? " expanded" : "");
   const toneAttr = row.tone ? ' data-tone="' + escapeHtml(row.tone) + '"' : "";
   const iconHtml = row.icon ? '<span class="tl-icon" aria-hidden="true">' + row.icon + "</span>" : "";
   return (
     '<div class="' + cls + '"' + toneAttr + '><span class="tl-node"></span>' +
-    '<span class="tl-row"' + rowAttrs + ">" + iconHtml + '<span class="tl-label">' + escapeHtml(row.label) + "</span>" + detailHtml + rightHtml + chevron + "</span>" +
+    '<span class="tl-row"' + rowAttrs + ">" + iconHtml + '<span class="tl-label">' + escapeHtml(row.label) + "</span>" + detailHtml + diffStatHtml(row.diff) + rightHtml + chevron + "</span>" +
     cardHtml +
     outputHtml +
     "</div>"

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { stepDetail, normalizeEdits, editDiffHtml, writePreviewHtml, cardFor, isCardCollapsible, cardDefaultExpanded, effectiveExpanded, timelineRow, tokCost } from "../src/webview/cards";
+import { stepDetail, editDiffHtml, writePreviewHtml, cardFor, isCardCollapsible, cardDefaultExpanded, effectiveExpanded, timelineRow, tokCost } from "../src/webview/cards";
+import { normalizeEdits } from "../src/webview/diffStats";
 import { deriveTodos, isTodoStep } from "../src/webview/cardsTodo";
 import { langForPath, highlightToLines } from "../src/webview/highlight";
 import type { ActivityStep } from "../src/webview/types";
@@ -138,9 +139,25 @@ test("thinking steps route through the card layer: open while streaming, collaps
   assert.equal(cardDefaultExpanded(running), true); // live reasoning visible
   assert.equal(cardDefaultExpanded(done), false); // auto-collapse on end
   assert.equal(effectiveExpanded({ ...done, expanded: true }), true); // user toggle wins
-  assert.equal(stepDetail(done), "first line"); // collapsed row preview
+  // The row NEVER previews the reasoning — thoughts appear only in the card on click.
+  assert.equal(stepDetail(done), "");
   assert.equal(stepDetail(running), ""); // live card shows the text itself
   assert.equal(stepDetail(step({ kind: "thinking", status: "done", thinkingText: "x", redacted: true })), "");
+});
+
+test("a done thinking row withholds its text until toggled open (Bug A: no leak into the step)", () => {
+  const done = step({ id: "th1", kind: "thinking", status: "done", thinkingText: "secret reasoning", label: "Thought for 4s" });
+  const collapsed = timelineRow({
+    id: done.id, status: "done", label: done.label, detail: stepDetail(done),
+    card: cardFor(done), cardCollapsible: isCardCollapsible(done), expanded: effectiveExpanded(done),
+  });
+  assert.doesNotMatch(collapsed, /secret reasoning/); // not in the detail, not in a visible card
+  assert.match(collapsed, /data-action="toggle-step"/); // …but the row is clickable
+  const open = timelineRow({
+    id: done.id, status: "done", label: done.label, detail: stepDetail(done),
+    card: cardFor(done), cardCollapsible: true, expanded: true,
+  });
+  assert.match(open, /secret reasoning/); // full text revealed by the toggle
 });
 
 test("cardDefaultExpanded/effectiveExpanded: Edit/Write open by default, Read collapses; explicit toggle wins", () => {
@@ -178,6 +195,18 @@ test("timelineRow: a collapsed Write card shows the chevron but withholds its (l
   assert.doesNotMatch(collapsed, /tl-card tl-write/); // huge preview not glued open
   const open = timelineRow({ id: "w1", status: "done", label: "Write", card, cardCollapsible: true, expanded: true });
   assert.match(open, /tl-card tl-write/);
+});
+
+test("timelineRow renders the +N/-N diff badge with per-count targets; zero sides are omitted", () => {
+  const both = timelineRow({ id: "e1", status: "done", label: "Edit", diff: { added: 99, removed: 98 } });
+  assert.match(both, /<span class="ds-add" data-target="99">\+99<\/span>/);
+  assert.match(both, /<span class="ds-del" data-target="98">-98<\/span>/);
+  const addOnly = timelineRow({ id: "w1", status: "done", label: "Write", diff: { added: 45, removed: 0 } });
+  assert.match(addOnly, /ds-add/);
+  assert.doesNotMatch(addOnly, /ds-del/);
+  // No stats (other tools / empty edit) → no badge markup at all.
+  assert.doesNotMatch(timelineRow({ id: "b1", status: "done", label: "Bash" }), /diff-stat/);
+  assert.doesNotMatch(timelineRow({ id: "e2", status: "done", label: "Edit", diff: { added: 0, removed: 0 } }), /diff-stat/);
 });
 
 test("cards carry an expand control that opens the overlay", () => {

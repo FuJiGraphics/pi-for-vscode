@@ -14,7 +14,7 @@ function bySelector<T extends HTMLElement>(selector: string): T {
 }
 
 export const appEl = bySelector<HTMLElement>(".app");
-export const titleEl = byId<HTMLElement>("title");
+export const tabsEl = byId<HTMLElement>("tabs");
 export const messagesEl = byId<HTMLElement>("messages");
 export const jumpLatestEl = byId<HTMLButtonElement>("jumpLatest");
 export const connectionBannerEl = byId<HTMLElement>("connection-banner");

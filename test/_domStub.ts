@@ -35,6 +35,7 @@ function fakeElement(): Record<string, unknown> {
     removeChild() {},
     remove() {},
     focus() {},
+    getBoundingClientRect: () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }),
     closest: () => null,
     querySelector: () => null,
     querySelectorAll: () => [],
@@ -47,6 +48,7 @@ const doc = {
   querySelector: () => fakeElement(),
   createElement: () => fakeElement(),
   addEventListener() {},
+  removeEventListener() {},
 };
 
 const g = globalThis as Record<string, unknown>;

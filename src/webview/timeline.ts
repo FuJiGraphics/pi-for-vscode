@@ -8,6 +8,7 @@
 import { escapeHtml, formatDuration } from "./util";
 import { cardFor, effectiveExpanded, isCardCollapsible, stepDetail, timelineRow } from "./cards";
 import { deriveTodos, isTodoStep, todoCardHtml } from "./cardsTodo";
+import { diffStatsFor } from "./diffStats";
 import { isTextStep, textStepRowHtml } from "./textSteps";
 import { isThinkingStep } from "./thinkingSteps";
 import { toolTheme } from "./toolTheme";
@@ -88,15 +89,13 @@ export function rowsForActivity(activity: Activity, highlightVersion: number): T
             detail: stepDetail(step),
             // A done thinking row's label already reads "Thought for Xs" — a time chip would repeat it.
             time: step.endedAt && !isThinkingStep(step) ? formatDuration(step.startedAt, step.endedAt) : "",
-            tokens: step.tokens,
-            cost: step.cost,
-            gen: step.kind === "generation",
             output: step.output,
             expanded: effectiveExpanded(step),
             card: cardFor(step),
             cardCollapsible: isCardCollapsible(step),
             tone: theme.tone || undefined,
             icon: theme.icon,
+            diff: diffStatsFor(step),
           }),
           step.id,
         );

@@ -178,6 +178,15 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
         case "requestSessions":
           await this.manager.postSessionList();
           return;
+        case "activateSession":
+          // Tab click: make that open runtime the visible session (instant view swap).
+          await this.manager.activateRuntime(message.sessionId);
+          return;
+        case "closeSession":
+          // Tab ×: reap the runtime; when it was the last one, open a fresh session so
+          // the strip always has a tab (newSession spawns + activates a new runtime).
+          if (!await this.manager.closeRuntime(message.sessionId, message.activateSessionId)) await this.newSession();
+          return;
         case "switchSession":
           await this.crud.switchSession(message.sessionPath);
           return;

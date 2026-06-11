@@ -155,8 +155,6 @@ test("currentWork: running thinking → 'Thinking…' + last line; running tool 
   assert.deepEqual(currentWork([think]), { label: "Thinking…", detail: "now reading code" });
   const tool: ActivityStep = { id: "t", label: "Read", detail: "", status: "running", startedAt: 2, tool: "read", input: { path: "src/a/b.ts" } };
   assert.deepEqual(currentWork([think, tool]), { label: "Read", detail: "b.ts" });
-  const gen: ActivityStep = { id: "g", kind: "generation", label: "Generated", detail: "", status: "running", startedAt: 3 };
-  assert.equal(currentWork([gen]), null); // generation checkpoints are not "current work"
   assert.equal(currentWork([]), null);
 });
 

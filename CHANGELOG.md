@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Chrome-style session tabs in the top bar: one tab per OPEN session, click to switch instantly, × to close (the saved session stays reopenable from history), running sessions show a pulse dot, and double-click renames inline. Past sessions stay in the clock popover.
+- Replace "Generated N tokens" timeline rows with a live turn-total counter in the status header that rolls up slot-machine style as each model call's usage lands; the finished turn keeps the exact total in its header chip.
+- Codex-style "+N −N" added/removed line badges on Edit/Write rows, counting pi's real diff once enriched (args-based estimate until then) and rolling to the new value on change.
+- Diff colors now follow the editor theme's git/diff palette (added = VS Code green, removed = VS Code red) across the new badges, diff signs, and full-row add/remove bands.
+- Looser timeline rhythm: more breathing room between step rows, cards, and narration (Claude Code-style density).
+- Fix: a collapsed "Thought for Xs" row no longer leaks the first reasoning line into the step — thoughts appear only when the row is clicked open.
 - Redesign the composer footer in a Claude Code-style layout: active-file references now sit in the action row after the `+` button, the context gauge shows the remaining percent in the center, and Codex OAuth usage appears as always-visible 5h/1w bars above the composer.
 - Simplify the session stats strip below the composer: it keeps the tokens · cost summary and circular context gauge, while the hover popover now focuses only on context usage.
 - Redesigned Settings panel: header with close button, card sections with icons, per-provider rows with credential glyphs, destructive hover for sign-out, full-width sign-in button.

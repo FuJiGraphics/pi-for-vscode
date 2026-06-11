@@ -274,7 +274,7 @@ test("P. hydrate restores thinking blocks as steps (thinking-only turn survives)
   assert.equal(second[0].redacted, true);
 });
 
-test("P2. hydrate folds a multi-call run: text steps, generation checkpoints, tool steps with outputs", () => {
+test("P2. hydrate folds a multi-call run: text steps and tool steps with outputs; usage sums into the turn", () => {
   fresh();
   hydrateSessionMessages([
     { role: "user", content: "fix it", timestamp: 1 },
@@ -305,10 +305,10 @@ test("P2. hydrate folds a multi-call run: text steps, generation checkpoints, to
   ]);
   assert.deepEqual(shape(), [["user", "fix it"], ["assistant", "Fixed."]]);
   const a = assistants()[0];
-  assert.equal(a.tokens, 200);
+  assert.equal(a.tokens, 200); // usage sums into the turn total (header chip) — no timeline node
   const steps = a.activity?.steps ?? [];
-  const flow = steps.map((s) => (isTextStep(s) ? "text:" + s.text : s.kind === "generation" ? "gen" : s.id));
-  assert.deepEqual(flow, ["text:Checking the config.", "gen", "call_1", "gen"]);
+  const flow = steps.map((s) => (isTextStep(s) ? "text:" + s.text : s.id));
+  assert.deepEqual(flow, ["text:Checking the config.", "call_1"]);
   const tool = steps.find((s) => s.id === "call_1")!;
   assert.equal(tool.tool, "read");
   assert.equal(tool.detail, "src/a.ts");
@@ -407,11 +407,12 @@ test("R. multi-call turn: narration demotes into the timeline BEFORE its tool st
   ]);
   const a = assistants()[0];
   assert.equal(a.text, "Fixed the bug."); // final answer only — narration did NOT concatenate/overwrite
+  assert.equal(a.tokens, 100); // the first call's usage folded into the turn total
   const steps = a.activity?.steps ?? [];
-  const flow = steps.map((s) => (isTextStep(s) ? "text:" + s.text : s.kind === "generation" ? "gen" : s.id));
-  // narration → generation checkpoint → its tool; second narration (no usage) → its tool
+  const flow = steps.map((s) => (isTextStep(s) ? "text:" + s.text : s.id));
+  // narration → its tool; second narration → its tool (chronological, no usage rows)
   assert.deepEqual(flow, [
-    "text:I'll check the config first.", "gen", "t1",
+    "text:I'll check the config first.", "t1",
     "text:Found it. Fixing now.", "t2",
   ]);
 });

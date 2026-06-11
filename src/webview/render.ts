@@ -10,7 +10,9 @@
 // This split is what keeps hover/toggle stable: the activity DOM is never rebuilt
 // at 60fps, so :hover state and click targets survive.
 import { state, save, isRenderSuppressed } from "./state";
-import { messagesEl, titleEl, modelEl, stopEl, composerEl, sendEl, inputEl } from "./dom";
+import { animateCounters } from "./counters";
+import { messagesEl, modelEl, stopEl, composerEl, sendEl, inputEl } from "./dom";
+import { renderSessionTabs } from "./sessionTabs";
 import { renderThinkingControl } from "./thinkingControl";
 import { escapeHtml, formatTime, formatDuration, roleLabel } from "./util";
 import { renderMarkdown } from "./markdown";
@@ -112,7 +114,9 @@ function statusHeaderInner(message: UiMessage, mode: "spinner" | "working" | "do
       "</span>" +
       // Always present (even empty) so paintLiveMessage can update it in place per frame:
       // the current work ("Read · cards.ts" / "Thinking… <last line>") or the step count.
-      '<span class="status-task">' + escapeHtml(statusTaskText(message)) + "</span>"
+      '<span class="status-task">' + escapeHtml(statusTaskText(message)) + "</span>" +
+      // Live turn-total token/cost counter — rolled up per frame by paintLiveMessage.
+      '<span class="usage-roll"></span>'
     );
   }
   const dot = mode === "working" ? '<span class="activity-working-dot"></span>' : "";
@@ -122,7 +126,7 @@ function statusHeaderInner(message: UiMessage, mode: "spinner" | "working" | "do
     // paintLiveMessage can update it per frame without rebuilding the header.
     return (
       dot + "<span>" + escapeHtml(label) + '</span><span class="status-task">' +
-      escapeHtml(statusTaskText(message)) + "</span>"
+      escapeHtml(statusTaskText(message)) + '</span><span class="usage-roll"></span>'
     );
   }
   // Join the present fragments with one middot rather than baking a leading " · " into each.
@@ -310,20 +314,6 @@ export function messageRenderKey(message: UiMessage): string {
   return outerRenderKey(message) + "§" + stepsRenderKey(message);
 }
 
-export function currentSessionTitle(): string {
-  const explicitTitle = state.sessionName.trim();
-  if (explicitTitle) return explicitTitle;
-
-  const firstUserMessage = state.messages.find((message) => message.role === "user");
-  const firstUserText = firstUserMessage?.text.replace(/\s+/g, " ").trim();
-  if (firstUserText) return firstUserText.length > 80 ? firstUserText.slice(0, 79) + "…" : firstUserText;
-
-  const imageCount = firstUserMessage?.attachments?.length ?? 0;
-  if (imageCount > 0) return imageCount === 1 ? "Image" : `${imageCount} images`;
-
-  return "New session";
-}
-
 // Cards whose innerHTML was (re)written this render — markOverflowingCards scans only
 // these scopes instead of every card in the conversation on every render.
 const dirtyCardScopes: HTMLElement[] = [];
@@ -361,6 +351,37 @@ function setText(node: HTMLElement, selector: string, text: string): void {
   if (el && el.textContent !== text) el.textContent = text;
 }
 
+// ---- live usage roll-up (roulette-style turn counter) ----
+// The header's .usage-roll eases toward message.tokens each frame (same catch-up idiom as
+// the typewriter reveal), so every recordUsage delta rolls the counter up by exactly that
+// amount over a few frames. Cost interpolates proportionally so the pair reads consistently.
+// Keyed by message id (not element) so the value survives structural header rebuilds; the
+// done header replaces the roll with the exact usageChip total, self-correcting any residue.
+// INTENTIONAL: the counter is the TURN-cumulative total — a retry/compaction continuation
+// reuses the same bubble (finalizeOrPrune keeps its id) and keeps accumulating, so the roll
+// continuing from the previous attempt's value is correct, not stale state.
+const ROLL_CATCHUP = 0.15;
+const usageShown = new Map<string, number>();
+const reduceMotion =
+  typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function paintUsageRoll(node: HTMLElement, message: UiMessage): void {
+  const rollEl = node.querySelector<HTMLElement>(".usage-roll");
+  if (!rollEl) return;
+  const target = message.tokens || 0;
+  let shown = usageShown.get(message.id) ?? 0;
+  if (reduceMotion || shown > target) {
+    shown = target; // reduced motion (or a stale higher value): snap, never animate down
+  } else if (shown < target) {
+    shown = Math.min(target, shown + Math.max(1, Math.ceil((target - shown) * ROLL_CATCHUP)));
+  }
+  usageShown.set(message.id, shown);
+  const cost = target > 0 && message.cost ? (message.cost * shown) / target : 0;
+  const text = shown > 0 ? tokCost(shown, cost) : "";
+  if (rollEl.textContent !== text) rollEl.textContent = text;
+  rollEl.classList.toggle("rolling", shown < target);
+}
+
 // Per-frame, in-place update of only the active message's volatile parts.
 export function paintLiveMessage(): void {
   const id = state.currentAssistantId;
@@ -382,6 +403,7 @@ export function paintLiveMessage(): void {
     }
     setText(node, ".think-time", seconds > 0 ? seconds + "s" : "");
     setText(node, ".status-task", statusTaskText(message));
+    paintUsageRoll(node, message);
   }
   if (message.text) {
     const bubble = node.querySelector(".bubble");
@@ -439,12 +461,8 @@ export function refreshSendButton(): void {
 }
 
 export function render(): void {
-  const title = currentSessionTitle();
-  if (!titleEl.classList.contains("editing")) {
-    titleEl.textContent = title;
-    titleEl.title = title;
-  }
-  // (No status subtitle under the title — removed. Run state shows in the activity
+  renderSessionTabs();
+  // (No status subtitle under the tabs — removed. Run state shows in the activity
   // timeline; "Interrupted" is rendered inline below the cut-off turn, not as a banner.)
   renderThinkingControl();
   renderSessionStats();
@@ -493,7 +511,11 @@ export function render(): void {
     }
   }
 
-  markOverflowingCards();
+  // One swept scope list feeds both post-render passes: the overflow-fade check and the
+  // diff-badge roulette (counters.ts) — each is O(rewritten elements), not O(conversation).
+  const dirty = dirtyCardScopes.splice(0);
+  markOverflowingCards(dirty);
+  animateCounters(dirty);
   applyLatestScroll(followLatest);
 }
 
@@ -502,9 +524,7 @@ export function render(): void {
 // innerHTML writes to avoid interleaved layout reads. Scoped to the elements actually rewritten
 // this render (an uncapped timeline makes a full-conversation scan too expensive per event).
 const OVERFLOW_CARDS = ".tl-diff, .tl-write, .tl-read, .tl-thinking";
-function markOverflowingCards(): void {
-  if (!dirtyCardScopes.length) return;
-  const scopes = dirtyCardScopes.splice(0);
+function markOverflowingCards(scopes: HTMLElement[]): void {
   for (const scope of scopes) {
     if (!scope.isConnected) continue;
     scope.querySelectorAll<HTMLElement>(OVERFLOW_CARDS).forEach((card) => {

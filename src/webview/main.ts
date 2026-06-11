@@ -1,7 +1,8 @@
 // Webview entry point: wires DOM events, routes inbound extension messages to
 // the appropriate handler, and performs the initial render.
 import { state, withSession, activateSession, dropSession, adoptPersistedView, consumeRestored } from "./state";
-import { currentSessionTitle, render, scheduleRender, bumpHighlightVersion } from "./render";
+import { render, scheduleRender, bumpHighlightVersion } from "./render";
+import { initSessionTabs, renderSessionTabs } from "./sessionTabs";
 import { addMessage, setRunning, interruptCurrentTurn, recordToolOutput } from "./conversation";
 import { hydrateSessionMessages } from "./sessionHydrate";
 import { handleRpcEvent, handleExtensionUiRequest, handleStderr } from "./handlers";
@@ -24,7 +25,7 @@ import { piMarkHtml } from "./piMark";
 import { post } from "./bridge";
 import { updateConnectionBanner } from "./connectionBanner";
 import { initScrollControls, resetScrollFollowing } from "./scroll";
-import { appEl, titleEl, sendEl, stopEl, historyBtnEl, newSessionEl, modelEl, inputEl, composerEl, messagesEl } from "./dom";
+import { appEl, sendEl, stopEl, historyBtnEl, newSessionEl, modelEl, inputEl, composerEl, messagesEl } from "./dom";
 import type { ExtensionToWebviewMessage } from "../protocol";
 
 // pi "boot" splash: the pi.dev block logo tetris-assembles, then fades to the chat.
@@ -69,92 +70,7 @@ newSessionEl.addEventListener("click", () => {
   closeSettings();
   post({ type: "newSession" });
 });
-function placeCaretAtEnd(element: HTMLElement): void {
-  const range = document.createRange();
-  range.selectNodeContents(element);
-  range.collapse(false);
-  const selection = window.getSelection();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-  requestAnimationFrame(() => {
-    element.scrollLeft = element.scrollWidth;
-  });
-}
-
-function insertPlainText(text: string): void {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return;
-  const range = selection.getRangeAt(0);
-  range.deleteContents();
-  const node = document.createTextNode(text.replace(/\s+/g, " "));
-  range.insertNode(node);
-  range.setStartAfter(node);
-  range.setEndAfter(node);
-  selection.removeAllRanges();
-  selection.addRange(range);
-}
-
-function startTitleRename(): void {
-  if (titleEl.classList.contains("editing")) return;
-  if (!state.sessionFile) {
-    addMessage("system", "Send a prompt before renaming this session.");
-    return;
-  }
-
-  const currentName = state.sessionName.trim() || currentSessionTitle();
-  titleEl.classList.add("editing");
-  titleEl.textContent = currentName;
-  titleEl.setAttribute("contenteditable", "plaintext-only");
-  titleEl.setAttribute("role", "textbox");
-  titleEl.setAttribute("aria-label", "Session title");
-  titleEl.setAttribute("aria-multiline", "false");
-  titleEl.spellcheck = false;
-  titleEl.focus({ preventScroll: true });
-  placeCaretAtEnd(titleEl);
-
-  let done = false;
-  const abort = new AbortController();
-  const finish = (commit: boolean): void => {
-    if (done) return;
-    done = true;
-    abort.abort();
-    const name = (titleEl.textContent || "").replace(/\s+/g, " ").trim();
-    titleEl.classList.remove("editing");
-    titleEl.removeAttribute("contenteditable");
-    titleEl.removeAttribute("role");
-    titleEl.removeAttribute("aria-label");
-    titleEl.removeAttribute("aria-multiline");
-    if (commit && name && name !== state.sessionName.trim()) {
-      state.sessionName = name;
-      post({ type: "renameSession", sessionPath: state.sessionFile, name });
-    }
-    scheduleRender();
-  };
-
-  titleEl.addEventListener("keydown", (event) => {
-    event.stopPropagation();
-    if (event.key === "Enter") {
-      if (event.isComposing || event.keyCode === 229) return;
-      event.preventDefault();
-      finish(true);
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      finish(false);
-    }
-  }, { signal: abort.signal });
-  titleEl.addEventListener("beforeinput", (event) => {
-    if (event.inputType === "insertParagraph" || event.inputType === "insertLineBreak") event.preventDefault();
-  }, { signal: abort.signal });
-  titleEl.addEventListener("paste", (event) => {
-    event.preventDefault();
-    insertPlainText(event.clipboardData?.getData("text/plain") || "");
-  }, { signal: abort.signal });
-  titleEl.addEventListener("blur", () => finish(true), { once: true, signal: abort.signal });
-}
-titleEl.addEventListener("dblclick", (event) => {
-  event.preventDefault();
-  startTitleRename();
-});
+// (The old single-title dblclick rename moved to sessionTabs.ts — the active tab renames.)
 inputEl.addEventListener("focus", () => composerEl.classList.add("focused"));
 inputEl.addEventListener("blur", () => composerEl.classList.remove("focused"));
 inputEl.addEventListener("input", () => {
@@ -273,31 +189,48 @@ function handleReset(): void {
   scheduleRender();
 }
 
+let lastHostActivatedSessionId = "";
+
 const inbound: InboundTable = {
   // per-session: applied to the tagged session's view
   rpcEvent: (m) => withSession(m.sessionId, () => handleRpcEvent(m.event)),
   toolOutput: (m) => withSession(m.sessionId, () => recordToolOutput(m.toolCallId, { text: m.text, isError: m.isError, diff: m.diff, firstChangedLine: m.firstChangedLine })),
-  running: (m) => withSession(m.sessionId, () => setRunning(!!m.value)),
+  // withSession suppresses renders for BACKGROUND views, but the tab strip must still
+  // reflect their running/title changes — hence the direct renderSessionTabs() calls.
+  running: (m) => {
+    withSession(m.sessionId, () => setRunning(!!m.value));
+    renderSessionTabs();
+  },
   sessionMessages: handleSessionMessages,
-  state: handleSessionState,
+  state: (m) => {
+    handleSessionState(m);
+    renderSessionTabs();
+  },
   // session activation / lifecycle
   activate: (m) => {
-    if (activateSession(m.sessionId)) {
+    const changedLocally = activateSession(m.sessionId);
+    const changedOnHost = m.sessionId !== lastHostActivatedSessionId;
+    lastHostActivatedSessionId = m.sessionId;
+    if (changedLocally || changedOnHost) {
       // The newly active session has its own pi runtime, which may have loaded a different set of
       // packages/skills (e.g. ones installed since the last session started). Drop the stale
-      // command cache so the slash palette reflects this runtime's commands.
+      // command cache so the slash palette reflects this runtime's commands. This also runs when
+      // the tab strip already switched optimistically and the host activation arrives later.
       invalidateCommands();
       // The context-chip attach toggle was a decision for the PREVIOUS conversation —
       // don't let it silently append references to prompts in this one.
       resetContextInclude();
       resetScrollFollowing();
-      scheduleRender();
+      if (changedLocally) scheduleRender();
       // Pull this session's authoritative usage/cost/context stats (webview-pull keeps
       // SessionRuntimeManager untouched; every seed path ends in this activate).
       post({ type: "requestSessionStats" });
     }
   },
-  dropSession: (m) => dropSession(m.sessionId),
+  dropSession: (m) => {
+    dropSession(m.sessionId);
+    renderSessionTabs();
+  },
   reset: handleReset,
   // global (not session-scoped)
   extensionUiRequest: (m) => handleExtensionUiRequest(m.request),
@@ -333,6 +266,7 @@ window.addEventListener("message", (event) => {
   if (handle) handle(message);
 });
 
+initSessionTabs();
 initHistory();
 initModelPicker();
 initCommandMenu();

@@ -1,7 +1,7 @@
 // Derives the "what is Pi doing right now" chip for the assistant status header:
 // the last running step wins — a streaming thinking block reads "Thinking… <last line>",
 // a running tool reads "Read · cards.ts". Falls back to the step count when nothing is
-// actively running (e.g. between a tool's end and the next generation).
+// actively running (e.g. between a tool's end and the next model call).
 // Pure and DOM-free; render.ts owns where the text lands (.status-task).
 import { stepDetail, shortenDetail } from "./cards";
 import { isThinkingStep, thinkingPreview } from "./thinkingSteps";
@@ -15,7 +15,7 @@ export interface CurrentWork {
 export function currentWork(steps: ActivityStep[]): CurrentWork | null {
   for (let i = steps.length - 1; i >= 0; i--) {
     const step = steps[i];
-    if (step.status !== "running" || step.kind === "generation") continue;
+    if (step.status !== "running") continue;
     if (isThinkingStep(step)) return { label: "Thinking…", detail: thinkingPreview(step, "last") };
     return { label: step.label, detail: shortenDetail(stepDetail(step)) };
   }

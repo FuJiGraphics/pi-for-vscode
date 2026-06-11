@@ -306,6 +306,27 @@ export class SessionRuntimeManager {
     await Promise.all(all.map((rt) => this.reapRuntime(rt)));
   }
 
+  // Close one open session tab. This is intentionally immediate from the user's point of
+  // view: the webview already removed the visual tab optimistically; the host now reaps the
+  // runtime. The on-disk session file survives and remains reopenable from History.
+  // Returns false when no runtime remains — the caller starts a fresh session so the strip
+  // always shows at least one tab (Chrome-style).
+  async closeRuntime(id: string, preferredNextId?: string): Promise<boolean> {
+    const rt = this.runtimes.get(id);
+    if (!rt) return true;
+    const wasActive = this.activeRuntimeId === rt.id;
+    await this.reapRuntime(rt);
+    if (!wasActive) {
+      await this.postSessionList();
+      return true;
+    }
+    const remaining = [...this.runtimes.keys()];
+    const nextId = preferredNextId && this.runtimes.has(preferredNextId) ? preferredNextId : remaining[remaining.length - 1];
+    if (!nextId) return false;
+    await this.activateRuntime(nextId); // posts activate + refreshes the session list
+    return true;
+  }
+
   // A background runtime finished its turn: drop its client so the broker idle-reaps the
   // pi. Deferred so we don't dispose the firing event emitter mid-dispatch; re-checked at
   // fire time in case the user re-activated it or it started another turn.

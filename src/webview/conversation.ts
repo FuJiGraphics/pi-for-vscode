@@ -102,9 +102,9 @@ export function summarizeArgs(args: unknown): string {
   return "";
 }
 
-// Accumulate pi's per-API-call token usage (from a message_end's `message.usage`) and add a
-// per-generation checkpoint node to the turn's timeline. A model call (generation) is the
-// thing that actually spends tokens — tool steps don't — so the usage is shown at that node.
+// Accumulate pi's per-API-call token usage (from a message_end's `message.usage`) into the
+// session and turn totals. No timeline node is added — the turn's running total rolls up in
+// the status header (render.ts usage-roll) instead of "Generated" checkpoint rows.
 // No-op when usage is absent.
 export function recordUsage(usage: unknown): void {
   if (!usage || typeof usage !== "object") return;
@@ -132,20 +132,6 @@ export function recordUsage(usage: unknown): void {
     breakdown.cacheRead += n(u.cacheRead);
     breakdown.cacheWrite += n(u.cacheWrite);
     message.usage = breakdown;
-    // Per-generation checkpoint in the expanded timeline.
-    const activity = ensureActivity();
-    const now = Date.now();
-    activity.steps.push({
-      id: uid("gen"),
-      label: "Generated",
-      detail: "",
-      status: "done",
-      startedAt: now,
-      endedAt: now,
-      tokens,
-      cost,
-      kind: "generation",
-    });
   }
   scheduleRender();
 }

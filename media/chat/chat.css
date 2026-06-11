@@ -21,6 +21,12 @@
   --error: #cc6666;
   --success: #b5bd68;
   --warning: #ffff00;
+  /* Diff add/del follow the EDITOR's git colors (so the chat's diffs read like VS Code's own
+     gutter/diff view); pi palette greens/reds remain the fallback when the vars are absent. */
+  --diff-add: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-charts-green, #b5bd68));
+  --diff-del: var(--vscode-gitDecoration-deletedResourceForeground, var(--vscode-charts-red, #cc6666));
+  --diff-add-bg: var(--vscode-diffEditor-insertedTextBackground, color-mix(in srgb, var(--diff-add) 14%, transparent));
+  --diff-del-bg: var(--vscode-diffEditor-removedTextBackground, color-mix(in srgb, var(--diff-del) 14%, transparent));
   --link: #81a2be;
   --heading: #f0c674;
   /* per-tool timeline tones (Tomorrow Night family — matches pi's signature palette) */
@@ -60,6 +66,11 @@
   --fs-title: calc(var(--fs-base) + 3px);   /* top-bar session title (~16px) */
   --chip-pad: 0 5px;     /* shared pill padding for presentational chips (cb-tag, model-cap) */
   --chip-radius: 5px;
+  /* VS Code webviews keep a right inset around the body. Let only the scroll container extend
+     into that inset so the chat scrollbar sits on the sidebar wall while message content stays put.
+     Keep this fixed: viewport-relative values drift as the side bar is resized and push the native
+     scrollbar outside the webview. */
+  --chat-scrollbar-outset: 18px;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -92,47 +103,120 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 }
 .topbar {
   min-height: 42px;
-  padding: 8px 0 0;
+  padding: 7px 8px 0;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
 }
-.title-row, .top-actions { display: flex; align-items: center; gap: 6px; }
-.title-row {
+.top-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; padding-bottom: 6px; }
+/* Chrome-style strip of OPEN sessions (one tab per live runtime view). */
+.tab-strip {
+  min-width: 0;
+  flex: 1 1 auto;
+  align-self: stretch;
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tab-strip::-webkit-scrollbar { display: none; }
+.tab {
+  position: relative;
+  flex: 0 1 178px;
+  min-width: 86px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 7px 0 12px;
+  margin-right: -1px;
+  border: 1px solid transparent;
+  border-bottom-color: transparent;
+  border-radius: 11px 11px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+.tab::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 8px;
+  bottom: 7px;
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 62%, transparent);
+}
+.tab:hover { background: color-mix(in srgb, var(--surface-hover) 78%, transparent); color: var(--fg); }
+.tab:hover::after,
+.tab.active::after,
+.tab.dragging::after { display: none; }
+.tab.active {
+  z-index: 1;
+  background: var(--bg);
+  border-color: color-mix(in srgb, var(--border) 86%, transparent);
+  border-bottom-color: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--fg) 7%, transparent) inset, 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent) inset;
+}
+.tab.dragging { opacity: .52; cursor: grabbing; }
+.tab.placeholder { cursor: default; flex: 0 0 auto; min-width: 0; height: 34px; }
+.tab.placeholder:hover { background: none; color: var(--muted); }
+.tab-label {
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
-}
-.top-actions { flex: 0 0 auto; }
-.title {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--fs-title);
-  font-weight: 650;
-  line-height: 28px;
-  letter-spacing: -.02em;
-  cursor: text;
+  font-weight: 600;
 }
-.title.editing {
-  width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  text-overflow: clip;
+.tab-label.editing {
   outline: none;
-  border-radius: 0;
-  background: transparent;
+  text-overflow: clip;
   box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--focus) 72%, transparent);
   caret-color: var(--accent);
-  scrollbar-width: none;
 }
-.title.editing::-webkit-scrollbar { display: none; }
-.title.editing::selection {
+.tab-label.editing::selection {
   background: color-mix(in srgb, var(--focus) 32%, transparent);
   color: var(--fg);
+}
+.tab-close {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: var(--fs-body);
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 100ms ease, background-color 100ms ease, color 100ms ease;
+}
+.tab:hover .tab-close,
+.tab.active .tab-close,
+.tab-close:focus-visible { opacity: 1; }
+.tab-close:hover { background: color-mix(in srgb, var(--fg) 16%, transparent); color: var(--fg); }
+.tab-running-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: live-dot 1.5s infinite;
+}
+/* Rename denied (no on-disk session yet): a brief shake instead of a system message. */
+.tab.tab-deny { animation: tab-deny 360ms ease; }
+@keyframes tab-deny {
+  0%, 100% { transform: none; }
+  25% { transform: translateX(-3px); }
+  50% { transform: translateX(3px); }
+  75% { transform: translateX(-2px); }
 }
 .brand-pi { color: var(--accent); font-weight: 700; }
 .icon-button {
@@ -151,19 +235,25 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 #messages {
   flex: 1;
   min-height: 0;
+  width: calc(100% + var(--chat-scrollbar-outset));
+  margin-right: calc(-1 * var(--chat-scrollbar-outset));
   overflow-y: auto;
-  /* Reserve the scrollbar lane so the session scrollbar sits pinned at the far right and never
-     shares an x with card content. (Inline cards no longer scroll, so there's no card scrollbar
-     to collide with — this keeps the session bar stable and flush right.) */
-  scrollbar-gutter: stable;
-  padding: 34px 0 18px;
+  padding: 34px var(--chat-scrollbar-outset) 18px 0;
   display: flex;
   flex-direction: column;
   gap: 28px;
-  contain: layout paint;
+  /* No paint containment: running/timeline dots intentionally glow outside their row boxes. */
+  contain: layout;
 }
-#messages::-webkit-scrollbar { width: 10px; }
-#messages::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg) 18%, transparent); border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
+#messages::-webkit-scrollbar { width: 14px; }
+#messages::-webkit-scrollbar-track { background: transparent; }
+#messages::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 22%, transparent);
+  border-radius: 999px 0 0 999px;
+  border: 4px solid transparent;
+  border-right: 0;
+  background-clip: padding-box;
+}
 .jump-latest {
   position: absolute;
   left: 50%;
@@ -205,7 +295,9 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 }
 .message {
   max-width: 100%;
-  contain: layout paint;
+  /* Paint containment clips the pulsing status/timeline halos near the left edge. */
+  contain: layout;
+  overflow: visible;
 }
 .message.user {
   display: flex;
@@ -421,6 +513,18 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Live turn-total counter in the running header — rolls up like a slot counter as each
+   model call's usage lands (paintUsageRoll eases it toward the exact total per frame). */
+.usage-roll {
+  flex: none;
+  margin-left: 8px;
+  color: var(--accent);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.usage-roll:empty { display: none; }
+.usage-roll.rolling { text-shadow: 0 0 9px color-mix(in srgb, var(--accent) 45%, transparent); }
 .stream-cursor {
   display: inline-block;
   width: 7px;
@@ -559,6 +663,7 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   border-top: none;
   padding-top: 0;
   margin-bottom: 14px;
+  overflow: visible;
 }
 .activity-toggle {
   padding: 0;
@@ -568,6 +673,7 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   color: var(--muted);
   font-weight: 600;
   text-align: left;
+  overflow: visible;
 }
 .activity-toggle:hover { color: var(--fg); }
 .activity-toggle.static { cursor: default; }
@@ -575,16 +681,29 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .activity-chevron { transition: transform 160ms ease; }
 .activity.expanded .activity-chevron { transform: rotate(90deg); }
 .activity-working-dot {
+  position: relative;
+  flex: none;
   width: 8px;
   height: 8px;
   border-radius: 999px;
   background: var(--accent);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 42%, transparent);
-  animation: live-dot 1.5s infinite;
+  overflow: visible;
+  isolation: isolate;
+}
+.activity-working-dot::after {
+  content: "";
+  position: absolute;
+  inset: -9px;
+  z-index: -1;
+  border-radius: 999px;
+  pointer-events: none;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 38%, transparent) 0 24%, transparent 70%);
+  animation: working-dot-glow 1.5s infinite;
 }
 /* Claude-style connected step timeline: status nodes joined by a vertical rail. */
 .activity-details {
-  margin: 9px 0 2px;
+  margin: 12px 0 4px;
+  padding-inline: clamp(14px, 2.2vw, 26px);
   display: none;
   color: var(--subtle);
   font-size: var(--fs-meta);
@@ -597,7 +716,8 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   grid-template-columns: 12px 1fr;
   column-gap: 9px;
   align-items: start;
-  padding: 2px 0;
+  /* Claude-style breathing room between rows (was 2px — too dense to scan). */
+  padding: 6px 0;
   /* Uncapped timelines: bound layout invalidation to the row. (No `paint` — it would
      clip the running dot's pulsing halo, which extends past the row box.) */
   contain: layout;
@@ -619,8 +739,10 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   width: 1px;
   background: color-mix(in srgb, var(--border) 85%, transparent);
 }
-.tl-step:first-child::before { top: 9px; }
-.tl-step:last-child::before { bottom: calc(100% - 9px); }
+/* 13px = row padding-top (6) + dot margin-top (5) + half the 7px dot — keeps the rail
+   ends anchored to the first/last dot centers at the looser row padding. */
+.tl-step:first-child::before { top: 13px; }
+.tl-step:last-child::before { bottom: calc(100% - 13px); }
 .tl-step:only-child::before { display: none; }
 .tl-node {
   grid-column: 1;
@@ -642,7 +764,6 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .tl-step[data-tone="web"] { --tool-accent: var(--tone-web); }
 .tl-step[data-tone="todo"] { --tool-accent: var(--tone-todo); }
 .tl-step[data-tone="think"] { --tool-accent: var(--muted); }
-.tl-step[data-tone="gen"] { --tool-accent: var(--accent); }
 .tl-done .tl-node { background: var(--tool-accent, var(--accent)); box-shadow: 0 0 0 1.5px var(--tool-accent, var(--accent)); }
 .tl-error .tl-node { background: var(--error); box-shadow: 0 0 0 1.5px var(--error); }
 .tl-running .tl-node {
@@ -674,7 +795,11 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   white-space: nowrap;
 }
 .tl-time { flex: none; margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; }
-.tl-tok { flex: none; margin-left: auto; color: var(--accent); font-variant-numeric: tabular-nums; }
+/* Codex-style "+N -N" added/removed badge on Edit/Write rows (VS Code git colors). */
+.diff-stat { flex: none; display: inline-flex; gap: 6px; font-variant-numeric: tabular-nums; font-weight: 650; }
+.diff-stat .ds-add { color: var(--diff-add); }
+.diff-stat .ds-del { color: var(--diff-del); }
+.diff-stat .ds-rolling { text-shadow: 0 0 8px color-mix(in srgb, currentColor 45%, transparent); }
 .tl-error .tl-label { color: var(--error); }
 /* Expandable tool card: the row toggles an OUT block (bash stdout / read content / web result). */
 .tl-expandable .tl-row { cursor: pointer; }
@@ -696,13 +821,10 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   word-break: break-word;
 }
 .tl-output.error { color: color-mix(in srgb, var(--error) 80%, var(--fg)); }
-/* Generation checkpoint: a hollow accent ring + muted label, distinct from tool steps. */
-.tl-gen .tl-node { background: var(--bg); box-shadow: 0 0 0 1.5px var(--accent); }
-.tl-gen .tl-label { color: var(--muted); }
 
 /* Narration node: intermediate assistant text demoted into the timeline at a toolUse
    boundary — reads as conversation text on the rail (Claude-style chronological flow). */
-.tl-text { padding: 4px 0; }
+.tl-text { padding: 7px 0; }
 .tl-text .tl-md {
   grid-column: 2;
   min-width: 0;
@@ -717,7 +839,7 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 /* Rich card body below a timeline row (Edit diff, Write preview, Read content, todos). */
 .tl-card {
   grid-column: 1 / -1;
-  margin: 5px 0 3px;
+  margin: 7px 0 5px;
   border-radius: 6px;
   overflow: hidden;
   position: relative; /* anchors the ⤢ expand control */
@@ -886,13 +1008,14 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   user-select: none;
 }
 .gl .cc { white-space: pre-wrap; word-break: break-word; }
-/* added / removed bands: a tinted full-row background + a colored left edge on the gutter. */
-.gl-add { background: color-mix(in srgb, var(--success) 14%, transparent); box-shadow: inset 2px 0 0 var(--success); }
-.gl-add .sg { color: var(--success); }
-.gl-add .cc { color: color-mix(in srgb, var(--success) 86%, var(--fg)); }
-.gl-del { background: color-mix(in srgb, var(--error) 14%, transparent); box-shadow: inset 2px 0 0 var(--error); }
-.gl-del .sg { color: var(--error); }
-.gl-del .cc { color: color-mix(in srgb, var(--error) 84%, var(--fg)); }
+/* added / removed bands: a tinted full-row background + a colored left edge on the gutter.
+   Colors track the editor theme's git/diff palette (see --diff-add/--diff-del in :root). */
+.gl-add { background: var(--diff-add-bg); box-shadow: inset 2px 0 0 var(--diff-add); }
+.gl-add .sg { color: var(--diff-add); }
+.gl-add .cc { color: color-mix(in srgb, var(--diff-add) 86%, var(--fg)); }
+.gl-del { background: var(--diff-del-bg); box-shadow: inset 2px 0 0 var(--diff-del); }
+.gl-del .sg { color: var(--diff-del); }
+.gl-del .cc { color: color-mix(in srgb, var(--diff-del) 84%, var(--fg)); }
 .gl-ctx .cc, .gl-code .cc { color: var(--subtle); }
 .diff-more { padding: 2px 10px 2px calc(3.2em + 8px); color: var(--dim); font-style: italic; }
 
@@ -1964,6 +2087,11 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
   70% { box-shadow: 0 0 0 8px transparent; }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
+@keyframes working-dot-glow {
+  0% { opacity: .46; transform: scale(.38); }
+  70% { opacity: 0; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1); }
+}
 @keyframes tl-enter {
   from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: none; }
@@ -2225,7 +2353,7 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
 @media (max-width: 520px) {
   .app { max-width: none; }
   .topbar { padding-inline: 0; }
-  #messages { padding: 24px 0 14px; gap: 24px; }
+  #messages { padding: 24px var(--chat-scrollbar-outset) 14px 0; gap: 24px; }
   .composer-wrap { padding: 8px 0 10px; }
   .message.user .bubble, .message-attachments { max-width: 88%; }
   .model-button { padding-inline: 6px; }

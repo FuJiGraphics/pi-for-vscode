@@ -61,14 +61,29 @@ export class SessionViewStore {
     return this.activeId;
   }
 
+  // Every open session's view in tab order (Map insertion = open order). The active view is
+  // read live (it may hold newer state than its `views` snapshot); the pre-activate ""
+  // placeholder key is skipped — it has no runtime to switch to or close.
+  openViews(): Array<{ id: string; view: AppState }> {
+    const out: Array<{ id: string; view: AppState }> = [];
+    for (const [id, view] of this.views) {
+      if (!id) continue;
+      out.push({ id, view: id === this.activeId ? this.activeView : view });
+    }
+    return out;
+  }
+
   isRenderSuppressed(): boolean {
     return this.suppressDepth > 0;
   }
 
   // Make `id` the visible session, caching the current one. Returns true if it changed.
+  // The outgoing view is re-cached only while it still EXISTS in the map — when a tab was
+  // just closed (dropSession → activate next), unconditionally re-setting it would
+  // resurrect the dropped view as a zombie tab.
   activateSession(id: string): boolean {
     if (id === this.activeId) return false;
-    if (this.activeId) this.views.set(this.activeId, this.activeView);
+    if (this.activeId && this.views.has(this.activeId)) this.views.set(this.activeId, this.activeView);
     this.activeId = id;
     this.activeView = this.getOrCreate(id);
     return true;
@@ -129,6 +144,38 @@ export class SessionViewStore {
     const view = this.views.get(id);
     if (view?.sessionFile) this.persistedViews.delete(view.sessionFile);
     this.views.delete(id);
+    if (this.activeId === id) {
+      this.activeId = "";
+      this.activeView = createView();
+    }
+  }
+
+  // UI-only close for the tab strip: remove the view immediately, and if it was active,
+  // activate the Chrome-style neighbor (right tab first, then left). The host still reaps
+  // the runtime afterwards; History remains the only place that deletes the saved file.
+  closeSessionTab(id: string): string | undefined {
+    const ids = this.openViews().map((entry) => entry.id);
+    const index = ids.indexOf(id);
+    if (index === -1) return this.activeId || undefined;
+    const wasActive = id === this.activeId;
+    const nextId = wasActive ? ids[index + 1] ?? ids[index - 1] : this.activeId || undefined;
+    this.dropSession(id);
+    if (wasActive && nextId) this.activateSession(nextId);
+    return nextId;
+  }
+
+  moveSessionTab(id: string, targetId: string, placeAfter: boolean): boolean {
+    if (!id || !targetId || id === targetId || !this.views.has(id) || !this.views.has(targetId)) return false;
+    const entries = [...this.views.entries()];
+    const moving = entries.find((entry) => entry[0] === id);
+    if (!moving) return false;
+    const without = entries.filter((entry) => entry[0] !== id);
+    const targetIndex = without.findIndex((entry) => entry[0] === targetId);
+    if (targetIndex === -1) return false;
+    without.splice(targetIndex + (placeAfter ? 1 : 0), 0, moving);
+    this.views.clear();
+    for (const [key, view] of without) this.views.set(key, view);
+    return true;
   }
 
   save(): void {
@@ -171,6 +218,9 @@ export class SessionViewStore {
       if (typeof m.revealed === "number") m.revealed = m.text.length; // reveal any half-typed text
       if (m.activity) {
         if (m.activity.endedAt == null) m.activity.endedAt = m.activity.startedAt;
+        // Views persisted by older builds still hold "Generated" checkpoint rows — drop them
+        // (usage now rolls up in the status header, never as timeline nodes).
+        m.activity.steps = m.activity.steps.filter((step) => (step.kind as string) !== "generation");
         for (const step of m.activity.steps) if (step.status === "running") step.status = "done";
       }
     }

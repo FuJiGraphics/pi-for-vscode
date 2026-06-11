@@ -107,9 +107,9 @@ export function handleRpcEvent(event: any): void {
           break;
         }
         // An intermediate message (more tool calls follow) demotes its narration text into
-        // the timeline BEFORE recordUsage, so the steps read: narration → generation
-        // checkpoint → the tool steps pi emits next. stopReason "toolUse" is the primary
-        // signal; toolCall content blocks are the provider-robust fallback.
+        // the timeline, so the steps read: narration → the tool steps pi emits next (the
+        // call's usage folds into the turn total via recordUsage). stopReason "toolUse" is
+        // the primary signal; toolCall content blocks are the provider-robust fallback.
         const content = message.content;
         const intermediate =
           message.stopReason === "toolUse" ||

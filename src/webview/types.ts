@@ -25,12 +25,10 @@ export interface ActivityStep {
   status: "running" | "done" | "error";
   startedAt: number;
   endedAt?: number;
-  /** Set on a generation checkpoint node: tokens/cost that model call spent. */
-  tokens?: number;
-  cost?: number;
-  /** Marks a model-generation checkpoint, a thinking block, or a demoted narration
-   *  text segment (vs a tool step). */
-  kind?: "generation" | "thinking" | "text";
+  /** Marks a thinking block or a demoted narration text segment (vs a tool step).
+   *  (Older persisted views may still carry kind:"generation" checkpoint rows — those
+   *  are filtered out on restore; see sessionStore.sanitizeView.) */
+  kind?: "thinking" | "text";
   /** kind === "text" only: intermediate narration markdown demoted from the bubble at a
    *  toolUse boundary. IMMUTABLE after creation (safe to fold its length into render keys). */
   text?: string;

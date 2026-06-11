@@ -1,9 +1,9 @@
 // Rebuilds the webview conversation from pi's on-disk session messages. A run of
 // consecutive assistant + toolResult messages folds into ONE UiMessage whose activity
 // timeline matches what the live event stream produces: thinking blocks → (intermediate)
-// narration text steps → a generation checkpoint → tool steps enriched with their
-// toolResult outputs. Restored sessions are therefore structurally indistinguishable
-// from live ones (asserted by the rpcSequences parity test).
+// narration text steps → tool steps enriched with their toolResult outputs. Restored
+// sessions are therefore structurally indistinguishable from live ones (asserted by
+// the rpcSequences parity test).
 import { state } from "./state";
 import { scheduleRender } from "./render";
 import { prettifyToolName, summarizeArgs, textFromContent } from "./conversation";
@@ -84,8 +84,8 @@ function simpleMessageToUi(message: any, index: number): UiMessage | null {
 /** Fold one run of consecutive assistant/toolResult messages into a single UiMessage.
  *  Per assistant message, steps land in live-stream order: thinking blocks (as streamed),
  *  the narration text (demoted when the message is intermediate — has toolCalls, stopped
- *  for toolUse, or is not the run's last), the generation checkpoint (usage), then the
- *  tool steps. Tool step ids reuse the on-disk toolCall ids, identical to live ids. */
+ *  for toolUse, or is not the run's last), then the tool steps. Tool step ids reuse the
+ *  on-disk toolCall ids, identical to live ids. */
 function foldAssistantRun(run: any[], firstIndex: number): UiMessage | null {
   const assistants = run.filter((m) => m.role === "assistant");
   if (assistants.length === 0) return null;
@@ -134,24 +134,13 @@ function foldAssistantRun(run: any[], firstIndex: number): UiMessage | null {
       }
     }
 
+    // Usage folds into the turn totals only (the done header's chip) — no timeline node,
+    // mirroring live recordUsage.
     const usage = message.usage;
     const t = typeof usage?.totalTokens === "number" && Number.isFinite(usage.totalTokens) ? usage.totalTokens : 0;
     const c = typeof usage?.cost?.total === "number" && Number.isFinite(usage.cost.total) ? usage.cost.total : 0;
-    if (t || c) {
-      tokens += t;
-      cost += c;
-      steps.push({
-        id: "session-gen-" + firstIndex + "-" + mi + "-" + ts,
-        label: "Generated",
-        detail: "",
-        status: "done",
-        startedAt: ts,
-        endedAt: ts,
-        tokens: t,
-        cost: c,
-        kind: "generation",
-      });
-    }
+    tokens += t;
+    cost += c;
 
     toolCalls.forEach((block, bi) => {
       const id = typeof block.id === "string" && block.id ? block.id : "session-tool-" + firstIndex + "-" + mi + "-" + bi;

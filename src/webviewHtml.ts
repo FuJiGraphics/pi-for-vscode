@@ -35,9 +35,7 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="title-row">
-        <div id="title" class="title">Pi</div>
-      </div>
+      <div id="tabs" class="tab-strip" role="tablist" aria-label="Open sessions"></div>
       <div class="top-actions">
         <button id="history" class="icon-button" title="Session history" aria-label="Session history">${CLOCK_ICON}</button>
         <button id="newSession" class="icon-button" title="New session" aria-label="New session">${NEW_CHAT_ICON}</button>

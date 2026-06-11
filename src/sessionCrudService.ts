@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { deleteSession, renameSession } from "./sessionStore";
 import { asRecord, toSessionQuickPickItem, type SessionQuickPickItem } from "./sessionFormat";
@@ -9,6 +10,8 @@ import type { WebviewPresenter } from "./webviewPresenter";
 // manager (spawn/activate/reap) and falls back to direct file ops when no live pi owns the
 // session. Owns no runtime state itself.
 export class SessionCrudService {
+  private readonly switchingByPath = new Map<string, Promise<void>>();
+
   constructor(
     private readonly manager: SessionRuntimeManager,
     private readonly presenter: WebviewPresenter,
@@ -85,6 +88,18 @@ export class SessionCrudService {
   //   2. otherwise spawn a fresh runtime and load the file into it.
   // It never blocks on the current session being busy — that session keeps running.
   async switchSession(sessionPath: string): Promise<void> {
+    const key = this.sessionPathKey(sessionPath);
+    const inFlight = this.switchingByPath.get(key);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+    const work = this.switchSessionOnce(sessionPath).finally(() => this.switchingByPath.delete(key));
+    this.switchingByPath.set(key, work);
+    await work;
+  }
+
+  private async switchSessionOnce(sessionPath: string): Promise<void> {
     if (!await this.manager.isCurrentWorkspaceSession(sessionPath)) {
       this.presenter.postSystem("That session belongs to a different workspace and cannot be opened from this project.");
       await this.manager.postSessionList();
@@ -168,6 +183,11 @@ export class SessionCrudService {
       this.presenter.postSystem(`Failed to rename session: ${error instanceof Error ? error.message : String(error)}`);
     }
     await this.manager.postSessionList();
+  }
+
+  private sessionPathKey(sessionPath: string): string {
+    const resolved = path.resolve(sessionPath);
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
   }
 
   // Rename via pi's set_session_name RPC when the active runtime is the live owner of
