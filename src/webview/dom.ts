@@ -46,6 +46,7 @@ export const commandPanelEl = byId<HTMLElement>("command-panel");
 export const commandListEl = byId<HTMLElement>("command-list");
 export const extensionUiRootEl = byId<HTMLElement>("extension-ui-root");
 export const onboardingRootEl = byId<HTMLElement>("onboarding-root");
+export const authModalRootEl = byId<HTMLElement>("auth-modal-root");
 export const settingsBtnEl = byId<HTMLButtonElement>("settings");
 export const settingsPanelEl = byId<HTMLElement>("settings-panel");
 export const settingsListEl = byId<HTMLElement>("settings-list");

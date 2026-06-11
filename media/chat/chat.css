@@ -650,6 +650,16 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .onboarding-step-root .extension-ui-overlay { position: static; inset: auto; background: none; display: block; padding: 0; }
 .onboarding-step-root .extension-ui-panel { box-shadow: none; border: 1px solid var(--border); width: 100%; max-width: none; }
 .onboarding-step-root .extension-ui-stack { position: static; margin-bottom: 10px; }
+/* Compact auth modal (≥1 provider already exists): registration cards or the model-invalidated
+   prompt, shown OVER the chat. 0 providers uses the full-screen .onboarding-root instead.
+   Above the pi dialog modals (z 80) so a bridge dialog hosted inside stays on top; below the
+   boot splash (z 100). The panel + hosted-step styling are reused from .extension-ui-* and
+   .onboarding-step-root (same classes). */
+.auth-modal-root { position: absolute; inset: 0; z-index: 90; }
+.auth-modal-body { display: flex; flex-direction: column; gap: 12px; }
+.auth-modal-body .onboarding-cards,
+.auth-modal-body .onboarding-step-root { width: 100%; }
+.auth-modal-body .onboarding-tagline { margin-bottom: 0; }
 .activity {
   margin: 0 0 16px;
   color: var(--muted);
