@@ -3,6 +3,7 @@
 // Pi switch model through `set_model`, and opens Pi-owned auth commands.
 import { appEl, modelEl, modelListEl, modelPanelEl, modelSearchEl } from "./dom";
 import { post } from "./bridge";
+import { openAuthModal } from "./onboarding";
 import { escapeHtml, formatTokens } from "./util";
 import type { ModelCost, ModelListItem } from "../protocol";
 
@@ -91,19 +92,26 @@ export function itemHtml(model: ModelListItem): string {
   );
 }
 
+// Register-a-provider row (reuses the muted .model-add styling). Opens the compact auth modal.
+function addProviderHtml(): string {
+  return (
+    '<button class="model-item model-add secondary" data-add-provider>' +
+    '<div class="model-main"><div class="model-title">+ Add provider</div>' +
+    '<div class="model-meta">Sign in with OAuth or an API key</div></div></button>'
+  );
+}
+
 function applyFilter(): void {
   const query = modelSearchEl.value.trim().toLowerCase();
   const filtered = query
     ? allModels.filter((m) => (m.model + " " + m.provider + " " + m.modelId + " " + m.id).toLowerCase().includes(query))
     : allModels;
   if (filtered.length === 0) {
-    modelListEl.innerHTML =
-      '<div class="model-empty">' +
-      (allModels.length === 0 ? "No models available. Sign in from Settings." : "No models match your search.") +
-      "</div>";
+    // A search miss just reports it; an empty roster (no query) still offers the add row.
+    modelListEl.innerHTML = query ? '<div class="model-empty">No models match your search.</div>' : addProviderHtml();
     return;
   }
-  modelListEl.innerHTML = filtered.map(itemHtml).join("");
+  modelListEl.innerHTML = filtered.map(itemHtml).join("") + addProviderHtml();
 }
 
 export function renderModelList(models: ModelListItem[]): void {
@@ -113,6 +121,11 @@ export function renderModelList(models: ModelListItem[]): void {
 
 function handleListClick(event: MouseEvent): void {
   const target = event.target as HTMLElement | null;
+  if (target && target.closest && target.closest("[data-add-provider]")) {
+    closeModelPicker();
+    openAuthModal();
+    return;
+  }
   const item = target && target.closest ? (target.closest(".model-item") as HTMLElement | null) : null;
   if (!item) return;
   const provider = item.dataset.provider;

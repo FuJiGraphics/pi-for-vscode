@@ -7,6 +7,7 @@ import { appEl, settingsBtnEl, settingsListEl, settingsPanelEl } from "./dom";
 import { post } from "./bridge";
 import { escapeHtml } from "./util";
 import { aboutInfo, authProviders, authStatus, isAuthAvailable, subscribeAuthState } from "./authState";
+import { openAuthModal } from "./onboarding";
 
 const ICON_ACCOUNT =
   '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="5" r="3"/><path d="M2.5 14c.8-2.8 3-4 5.5-4s4.7 1.2 5.5 4"/></svg>';
@@ -113,8 +114,10 @@ function handleListClick(event: MouseEvent): void {
     return;
   }
   if (action === "signin") {
-    post({ type: "login" });
+    // ≥1 provider already exists here, so register through the compact card modal over the
+    // chat (the bridge's plain select is reserved for the 0-provider full-screen gate).
     closeSettings();
+    openAuthModal();
     return;
   }
   if (action === "signout") {
