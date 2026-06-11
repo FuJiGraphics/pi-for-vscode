@@ -72,3 +72,9 @@ export function formatRelativeTime(timestamp: number): string {
 export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
 }
+
+/** A trimmed, non-empty string field from a loose record, else undefined. */
+export function stringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}

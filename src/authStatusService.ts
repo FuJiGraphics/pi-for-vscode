@@ -45,8 +45,10 @@ export function providersFromAuthJson(raw: string): AuthProviderStatus[] {
 }
 
 export interface AuthStatusDeps {
-  /** Re-fetch the model list (quiet) so the authoritative outcome confirms a file change. */
-  refreshModels(): Promise<void>;
+  /** An external auth.json change happened (login/logout from ANY pi) — force the visible
+   *  session's pi to reload its registry, re-fetch the model list (which feeds the verdict via
+   *  noteModels), and correct a now-invalid model selection. Owned by AuthRevocationService. */
+  onAuthFileChanged(): void;
 }
 
 export class AuthStatusService {
@@ -70,9 +72,10 @@ export class AuthStatusService {
         if (this.debounce) clearTimeout(this.debounce);
         this.debounce = setTimeout(() => {
           this.debounce = undefined;
+          // Immediate verdict from auth.json metadata (dismisses/mounts the gate fast); the
+          // handler then forces a pi registry reload + model re-fetch to confirm and correct.
           void this.postAuthState();
-          // Confirm through pi: the refreshed model list flows back via noteModels.
-          void this.deps.refreshModels();
+          this.deps.onAuthFileChanged();
         }, 300);
       });
     } catch {

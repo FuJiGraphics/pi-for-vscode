@@ -277,6 +277,11 @@ export type ExtensionToWebviewMessage =
   // Host-computed auth verdict (pi's get_available_models outcome + auth.json metadata).
   // "unknown" must FAIL OPEN — the webview never blocks the chat on it.
   | { type: "authState"; status: "authenticated" | "unauthenticated" | "unknown"; providers: AuthProviderStatus[] }
+  // The active session's selected model lost its auth (its provider was signed out on another
+  // device) but other models remain — prompt the user to pick another or re-sign-in. Raised
+  // by AuthRevocationService after an external auth.json change. (0 models → authState
+  // "unauthenticated" → onboarding gate instead; no message.)
+  | { type: "modelInvalidated"; previousModel?: string }
   // Extension/pi version info for the settings About section.
   | { type: "about"; extensionVersion: string; piVersion?: string; piSource?: string }
   // `authAvailable` reflects whether the bundled auth bridge registered its login command in
