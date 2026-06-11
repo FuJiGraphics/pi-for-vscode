@@ -1,15 +1,10 @@
 import type { PiRpcClient } from "./piRpcClient";
 import type { ModelCost, ModelListItem } from "./protocol";
-import { asRecord } from "./sessionFormat";
+import { asRecord, stringField } from "./sessionFormat";
 import type { SessionRuntime } from "./sessionRuntime";
 import type { WebviewPresenter } from "./webviewPresenter";
 
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
-
-function stringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
-  const value = record?.[key];
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
 
 function numberField(record: Record<string, unknown> | undefined, key: string): number | undefined {
   const value = record?.[key];
@@ -104,6 +99,13 @@ export class ModelService {
 
   /** `quiet` suppresses the system-message error spam for background auth checks. */
   async postModelList(quiet = false): Promise<void> {
+    await this.fetchModels(quiet);
+  }
+
+  /** Fetch the available models + current state, post the list, feed the auth verdict, AND
+   *  return the items so callers (AuthRevocationService) can validate the current selection.
+   *  Returns [] on any failure / no runtime (also the authoritative "no auth" signal). */
+  async fetchModels(quiet = true): Promise<ModelListItem[]> {
     const rt = await this.deps.ensureActiveRuntime().catch((error) => {
       if (!quiet) this.deps.reportRuntimeError(error);
       return undefined;
@@ -112,7 +114,7 @@ export class ModelService {
     if (!client) {
       this.deps.onModelsFetched?.(undefined);
       this.presenter.post({ type: "modelList", models: [] });
-      return;
+      return [];
     }
 
     try {
@@ -124,7 +126,7 @@ export class ModelService {
         if (!quiet) this.presenter.postSystem(`Failed to load models: ${String(modelsResponse.error ?? "unknown error")}`);
         this.deps.onModelsFetched?.(undefined);
         this.presenter.post({ type: "modelList", models: [] });
-        return;
+        return [];
       }
 
       const data = asRecord(modelsResponse.data);
@@ -132,10 +134,12 @@ export class ModelService {
       const items = modelListItemsFromRpc(models, asRecord(state)?.model);
       this.deps.onModelsFetched?.(items);
       this.presenter.post({ type: "modelList", models: items });
+      return items;
     } catch (error) {
       if (!quiet) this.presenter.postSystem(`Failed to load models: ${error instanceof Error ? error.message : String(error)}`);
       this.deps.onModelsFetched?.(undefined);
       this.presenter.post({ type: "modelList", models: [] });
+      return [];
     }
   }
 
