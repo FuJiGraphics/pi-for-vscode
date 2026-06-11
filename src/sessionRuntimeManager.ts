@@ -19,6 +19,9 @@ import type { BundledExtensionResolver } from "./bundledExtensionResolver";
 export class SessionRuntimeManager {
   private readonly runtimes = new Map<string, SessionRuntime>();
   private activeRuntimeId?: string;
+  // Called when a runtime becomes idle or is activated, so the auth-revocation service can
+  // drain a pending registry refresh on the visible session. Set once by the composition root.
+  private settledHook?: (rt: SessionRuntime) => void;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -37,6 +40,14 @@ export class SessionRuntimeManager {
 
   setActiveRuntimeId(id: string | undefined): void {
     this.activeRuntimeId = id;
+  }
+
+  setSettledHook(hook: (rt: SessionRuntime) => void): void {
+    this.settledHook = hook;
+  }
+
+  forEachRuntime(callback: (rt: SessionRuntime) => void): void {
+    for (const rt of this.runtimes.values()) callback(rt);
   }
 
   /** The RpcEventSink the router calls back into (this manager). */
@@ -82,6 +93,9 @@ export class SessionRuntimeManager {
       rt.pendingUiRequest = undefined;
     }
     await this.postSessionList();
+    // Now the visible session — correct a model selection invalidated by an auth change that
+    // happened while this tab was in the background.
+    this.settledHook?.(rt);
   }
 
   findRuntimeBySessionFile(sessionPath: string): SessionRuntime | undefined {
@@ -428,6 +442,8 @@ export class SessionRuntimeManager {
     // running also drives the session-list badge.
     this.presenter.post({ type: "running", sessionId: rt.id, value });
     if (rt.id !== this.activeRuntimeId) void this.postSessionList();
+    // Turn ended → a refresh deferred because the runtime was busy can now run.
+    if (!value) this.settledHook?.(rt);
   }
 
   // Re-sync the active session to pi's authoritative state after a transport drop: re-seed

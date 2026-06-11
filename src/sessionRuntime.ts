@@ -16,6 +16,9 @@ export interface SessionRuntime {
   pendingUiRequest?: PiRpcMessage;
   /** Whether the webview has been given this session's initial view (state + messages). */
   seeded?: boolean;
+  /** An external auth.json change happened while this runtime existed; its pi may hold a
+   *  stale model registry. Drained (refresh + validate) when the runtime is next idle/active. */
+  authDirty?: boolean;
   readonly disposables: vscode.Disposable[];
 }
 
