@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import authBridge from "../resources/pi-extensions/vscode-auth-bridge";
 
-test("auth bridge registers login and logout commands", () => {
+test("auth bridge registers login, logout, and refresh-auth commands", () => {
   const registered: Record<string, unknown> = {};
   authBridge({
     registerCommand(name: string, options: unknown) {
@@ -11,6 +11,34 @@ test("auth bridge registers login and logout commands", () => {
   });
   assert.equal(typeof registered.login, "object");
   assert.equal(typeof registered.logout, "object");
+  assert.equal(typeof registered["refresh-auth"], "object");
+});
+
+test("refresh-auth re-reads auth.json from disk BEFORE recomputing the registry", async () => {
+  const registered: Record<string, { handler: (args: string, ctx: unknown) => Promise<void> }> = {};
+  // Order matters: authStorage.reload() repopulates the in-memory creds from disk; only then does
+  // modelRegistry.refresh() recompute availability. Reversed, refresh() would see stale creds.
+  const calls: string[] = [];
+  authBridge({
+    registerCommand(name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) {
+      registered[name] = options;
+    },
+  });
+
+  await registered["refresh-auth"].handler("", {
+    modelRegistry: {
+      authStorage: {
+        set: () => undefined,
+        login: async () => undefined,
+        logout: () => undefined,
+        reload: () => calls.push("reload"),
+      },
+      refresh: () => calls.push("refresh"),
+    },
+    ui: { notify: () => undefined },
+  });
+
+  assert.deepEqual(calls, ["reload", "refresh"]);
 });
 
 test("auth bridge saves API keys through Pi authStorage", async () => {

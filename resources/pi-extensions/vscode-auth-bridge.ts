@@ -221,6 +221,20 @@ async function login(args: string, ctx: AnyRecord): Promise<void> {
   else await loginWithApiKey(ctx, bridge, option);
 }
 
+// Pick up an auth.json change made by ANOTHER pi (e.g. a login/logout in another VS Code window
+// or another machine sharing ~/.pi/agent). pi's AuthStorage reads auth.json ONCE at spawn into an
+// in-memory `data` map; hasAuth()/get()/list() never re-read the file, and modelRegistry.refresh()
+// only reloads models.json — neither sees an external credential change. authStorage.reload() is
+// the only path that re-reads auth.json from disk, so it MUST run first; refresh() then recomputes
+// available models from the fresh credentials (+ OAuth modifyModels / models.json). VS Code calls
+// this after its auth.json watcher fires so a now-revoked model selection is detected. Silent.
+async function refreshAuth(_args: string, ctx: AnyRecord): Promise<void> {
+  const bridge = getAuthBridge(ctx);
+  if (!bridge) return;
+  if (typeof bridge.authStorage.reload === "function") bridge.authStorage.reload();
+  refreshModels(bridge.modelRegistry);
+}
+
 async function logout(args: string, ctx: AnyRecord): Promise<void> {
   const bridge = getAuthBridge(ctx);
   if (!bridge) {
@@ -259,5 +273,9 @@ export default function vscodeAuthBridge(pi: AnyRecord): void {
   pi.registerCommand("logout", {
     description: "Remove credentials stored by Pi authentication",
     handler: logout,
+  });
+  pi.registerCommand("refresh-auth", {
+    description: "Reload Pi's model/auth registry (used by VS Code after an external auth change)",
+    handler: refreshAuth,
   });
 }
