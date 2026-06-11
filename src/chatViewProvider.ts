@@ -7,6 +7,7 @@ import { RpcEventRouter } from "./rpcEventRouter";
 import { SessionStatsService } from "./sessionStatsService";
 import { CommandPaletteService } from "./commandPaletteService";
 import { ModelService } from "./modelService";
+import { AuthRevocationService } from "./authRevocationService";
 import { SessionRuntimeManager } from "./sessionRuntimeManager";
 import { SessionCrudService } from "./sessionCrudService";
 import type { ImageAttachment, PiRpcMessage, WebviewToExtensionMessage } from "./protocol";
@@ -25,13 +26,14 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
   private readonly presenter = new WebviewPresenter();
   private readonly stats = new SessionStatsService(this.presenter);
   private readonly events = new RpcEventRouter(this.presenter, this.stats);
-  // refreshModels is a lambda so the late-bound this.models is read at call time.
+  // Lambda so the late-bound this.revocation is read at call time.
   private readonly authStatus = new AuthStatusService(this.presenter, {
-    refreshModels: () => this.models.postModelList(true),
+    onAuthFileChanged: () => void this.revocation.onAuthFileChanged(),
   });
   private readonly bundled: BundledExtensionResolver;
   private readonly manager: SessionRuntimeManager;
   private readonly models: ModelService;
+  private readonly revocation: AuthRevocationService;
   private readonly commandPalette: CommandPaletteService;
   private readonly crud: SessionCrudService;
   private contextTracker?: EditorContextTracker;
@@ -48,6 +50,13 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
       reportRuntimeError: (error) => this.manager.reportRuntimeError(error),
       onModelsFetched: (models) => this.authStatus.noteModels(models),
     });
+    this.revocation = new AuthRevocationService(this.presenter, {
+      activeRuntime: () => this.manager.active,
+      forEachRuntime: (cb) => this.manager.forEachRuntime(cb),
+      requestState: (client) => this.manager.requestState(client),
+      fetchModels: () => this.models.fetchModels(),
+    });
+    this.manager.setSettledHook((rt) => this.revocation.handleRuntimeSettled(rt));
     this.authStatus.start();
     this.commandPalette = new CommandPaletteService(this.presenter, {
       ensureActiveRuntime: () => this.manager.ensureActiveRuntime(),

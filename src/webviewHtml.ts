@@ -64,6 +64,7 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
     </section>
     <div id="extension-ui-root" class="extension-ui-root" aria-live="polite"></div>
     <div id="onboarding-root" class="onboarding-root" hidden></div>
+    <div id="auth-modal-root" class="auth-modal-root" hidden></div>
     <footer class="composer-wrap">
       <div id="composer" class="composer">
         <div id="attachmentTray" class="attachment-tray" hidden></div>

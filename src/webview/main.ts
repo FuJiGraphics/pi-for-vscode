@@ -14,7 +14,7 @@ import { initImageAttachments } from "./attachments";
 import { closeHistory, toggleHistory, renderSessionList, initHistory } from "./history";
 import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker } from "./modelPicker";
 import { setAboutInfo, setAuthState, setAuthAvailable } from "./authState";
-import { initOnboarding, onboardingConnectionChange } from "./onboarding";
+import { initOnboarding, onboardingConnectionChange, openModelInvalidatedModal } from "./onboarding";
 import { closeSettings, initSettings } from "./settingsPanel";
 import { initUsageBars } from "./usageBars";
 import { acceptActive, closeCommandMenu, initCommandMenu, invalidateCommands, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
@@ -249,6 +249,7 @@ const inbound: InboundTable = {
     setAuthAvailable(m.authAvailable);
   },
   authState: (m) => setAuthState(m.status, m.providers),
+  modelInvalidated: (m) => openModelInvalidatedModal(m.previousModel),
   about: (m) => setAboutInfo({ extensionVersion: m.extensionVersion, piVersion: m.piVersion, piSource: m.piSource }),
   modelList: (m) => renderModelList(m.models),
   sessionStats: (m) => withSession(m.sessionId, () => {
