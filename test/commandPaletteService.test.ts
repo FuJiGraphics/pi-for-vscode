@@ -12,7 +12,7 @@ function serviceWith(commands: unknown[] | { fail: true }) {
   };
   const service = new CommandPaletteService(
     { post: (message: unknown) => posts.push(message) } as any,
-    { ensureActiveRuntime: async () => ({ id: "rt", client } as any) },
+    { ensureRuntime: async () => ({ id: "rt", client } as any) },
   );
   return { service, posts };
 }

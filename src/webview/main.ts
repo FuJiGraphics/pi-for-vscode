@@ -1,6 +1,6 @@
 // Webview entry point: wires DOM events, routes inbound extension messages to
 // the appropriate handler, and performs the initial render.
-import { state, withSession, activateSession, dropSession, adoptPersistedView, consumeRestored } from "./state";
+import { state, withSession, activateSession, promoteProvisional, getActiveSessionId, dropSession, adoptPersistedView, consumeRestored } from "./state";
 import { render, scheduleRender, bumpHighlightVersion } from "./render";
 import { initSessionTabs, renderSessionTabs } from "./sessionTabs";
 import { addMessage, setRunning, interruptCurrentTurn, recordToolOutput } from "./conversation";
@@ -17,6 +17,7 @@ import { setAboutInfo, setAuthState, setAuthAvailable } from "./authState";
 import { initOnboarding, onboardingConnectionChange, openModelInvalidatedModal } from "./onboarding";
 import { closeSettings, initSettings } from "./settingsPanel";
 import { initUsageBars } from "./usageBars";
+import { initSessionStats } from "./sessionStatsBar";
 import { acceptActive, closeCommandMenu, initCommandMenu, invalidateCommands, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
 import { initContextChip, resetContextInclude, updateEditorContext } from "./contextChip";
 import { initThinkingControl, supportedThinkingLevels } from "./thinkingControl";
@@ -208,7 +209,11 @@ const inbound: InboundTable = {
   },
   // session activation / lifecycle
   activate: (m) => {
-    const changedLocally = activateSession(m.sessionId);
+    // First commit out of the empty state: the active view is the provisional composer (no
+    // runtime id, no session file yet). Re-key it to the real runtime instead of swapping in a
+    // blank view, so an optimistic first message + spinner survive the commit with no flicker.
+    const provisional = getActiveSessionId() === "" && !state.sessionFile;
+    const changedLocally = provisional ? promoteProvisional(m.sessionId) : activateSession(m.sessionId);
     const changedOnHost = m.sessionId !== lastHostActivatedSessionId;
     lastHostActivatedSessionId = m.sessionId;
     if (changedLocally || changedOnHost) {
@@ -276,6 +281,7 @@ initContextChip();
 initOnboarding();
 initSettings();
 initUsageBars();
+initSessionStats();
 initImageAttachments(() => {
   autoResizeInput();
   updateInputState();

@@ -80,7 +80,7 @@ export function modelListItemsFromRpc(models: unknown, currentModel?: unknown): 
 
 /** Manager surface the model service borrows to reach the active runtime. */
 export interface ModelServiceDeps {
-  ensureActiveRuntime(): Promise<SessionRuntime | undefined>;
+  ensureRuntime(): Promise<SessionRuntime | undefined>;
   requestState(client: PiRpcClient): Promise<Record<string, unknown> | undefined>;
   postState(): Promise<unknown>;
   reportRuntimeError(error: unknown): void;
@@ -106,7 +106,7 @@ export class ModelService {
    *  return the items so callers (AuthRevocationService) can validate the current selection.
    *  Returns [] on any failure / no runtime (also the authoritative "no auth" signal). */
   async fetchModels(quiet = true): Promise<ModelListItem[]> {
-    const rt = await this.deps.ensureActiveRuntime().catch((error) => {
+    const rt = await this.deps.ensureRuntime().catch((error) => {
       if (!quiet) this.deps.reportRuntimeError(error);
       return undefined;
     });
@@ -148,7 +148,7 @@ export class ModelService {
     const id = modelId.trim();
     if (!providerId || !id) return;
 
-    const rt = await this.deps.ensureActiveRuntime();
+    const rt = await this.deps.ensureRuntime();
     if (!rt?.client) return;
 
     const response = await rt.client.request({ type: "set_model", provider: providerId, modelId: id }, 30_000);
@@ -165,7 +165,7 @@ export class ModelService {
     const trimmed = level.trim().toLowerCase();
     if (!THINKING_LEVELS.has(trimmed)) return;
 
-    const rt = await this.deps.ensureActiveRuntime();
+    const rt = await this.deps.ensureRuntime();
     if (!rt?.client) return;
 
     const response = await rt.client.request({ type: "set_thinking_level", level: trimmed }, 10_000);

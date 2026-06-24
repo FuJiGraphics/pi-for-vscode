@@ -5,6 +5,7 @@
 import type { AuthProviderStatus } from "../protocol";
 import { authProviders, subscribeAuthState } from "./authState";
 import { usageBarsEl } from "./dom";
+import { anchorPopover } from "./popoverAnchor";
 import { escapeHtml } from "./util";
 import { hasUsageData, subscribeUsageData, usageBarRows, type UsageBarRow } from "./usageData";
 
@@ -49,6 +50,7 @@ function syncFromStore(): void {
 }
 
 export function initUsageBars(): void {
+  anchorPopover(usageBarsEl, ".usage-popover");
   subscribeUsageData(syncFromStore);
   subscribeAuthState(syncFromStore);
   syncFromStore();

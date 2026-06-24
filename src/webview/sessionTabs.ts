@@ -52,9 +52,10 @@ export function renderSessionTabs(): void {
     activeId + "#" + views.map(({ id, view }) => id + "|" + sessionTitleOf(view) + (view.running ? "|R" : "")).join(";");
   if (tabsEl.dataset.sig === sig) return; // unchanged → keep hover/element identity
   tabsEl.dataset.sig = sig;
-  tabsEl.innerHTML = views.length
-    ? views.map(({ id, view }) => tabHtml(id, view, id === activeId)).join("")
-    : '<div class="tab active placeholder" role="tab" aria-selected="true"><span class="tab-label">Pi</span></div>';
+  // No open sessions → empty strip, NOT a fake "Pi" tab. The empty state is just the composer;
+  // a placeholder tab read as a phantom session literally named "Pi" (e.g. right after closing
+  // the last/only session), which is confusing.
+  tabsEl.innerHTML = views.map(({ id, view }) => tabHtml(id, view, id === activeId)).join("");
   tabsEl.querySelector<HTMLElement>(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 

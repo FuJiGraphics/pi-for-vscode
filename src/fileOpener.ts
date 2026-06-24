@@ -1,18 +1,18 @@
 // Host side of the clickable-file-reference feature: resolve a path the user clicked in a chat
-// message and reveal it in the editor. Paths the agent emits are relative to the workspace cwd
-// (the broker spawns pi with the workspace folder as cwd — see piBroker.ts), so relative paths
-// resolve against getWorkspaceCwd(). Best-effort: a missing file or absent workspace is a silent
-// no-op (the webview can't check the filesystem, so it links optimistically and the host gates).
+// message and reveal it in the editor. Paths the agent emits are relative to the cwd the broker
+// spawned pi with (workspace folder, or home when no folder is open — see piBroker.ts), so
+// relative paths resolve against getAgentCwd(). Best-effort: a missing file is a silent no-op
+// (the webview can't check the filesystem, so it links optimistically and the host gates).
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { getWorkspaceCwd } from "./workspace";
+import { getAgentCwd } from "./workspace";
 
 export async function openWorkspaceFile(rel: string, line?: number, col?: number): Promise<void> {
   const raw = (rel || "").trim();
   if (!raw) return;
-  const cwd = getWorkspaceCwd();
-  const abs = path.isAbsolute(raw) ? raw : cwd ? path.join(cwd, raw) : undefined;
-  if (!abs) return; // no workspace folder to resolve against
+  // Resolve relative paths against the dir Pi runs in (workspace folder, or home when none) —
+  // the same cwd the broker spawned pi with, so the agent's relative paths line up.
+  const abs = path.isAbsolute(raw) ? raw : path.join(getAgentCwd(), raw);
 
   let doc: vscode.TextDocument;
   try {

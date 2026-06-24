@@ -13,8 +13,6 @@ import { SessionCrudService } from "./sessionCrudService";
 import type { ImageAttachment, PiRpcMessage, WebviewToExtensionMessage } from "./protocol";
 import { getChatHtml } from "./webviewHtml";
 import { EditorContextTracker } from "./editorContextTracker";
-import { samePath } from "./workspace";
-import { readSessionFile } from "./stateHelpers";
 import { resolveActiveTheme } from "./themeResolver";
 import { openWorkspaceFile } from "./fileOpener";
 
@@ -44,7 +42,9 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     // The router calls back into the manager (runtime map owner). Bound once, after both exist.
     this.events.bind(this.manager.eventSink());
     this.models = new ModelService(this.presenter, {
-      ensureActiveRuntime: () => this.manager.ensureActiveRuntime(),
+      // RPC-only: in the empty state this reaches the warm spare so the model/auth verdict
+      // resolves WITHOUT committing a visible session.
+      ensureRuntime: () => this.manager.ensureRuntimeForRpc(),
       requestState: (client) => this.manager.requestState(client),
       postState: () => this.manager.postState(),
       reportRuntimeError: (error) => this.manager.reportRuntimeError(error),
@@ -59,7 +59,7 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
     this.manager.setSettledHook((rt) => this.revocation.handleRuntimeSettled(rt));
     this.authStatus.start();
     this.commandPalette = new CommandPaletteService(this.presenter, {
-      ensureActiveRuntime: () => this.manager.ensureActiveRuntime(),
+      ensureRuntime: () => this.manager.ensureRuntimeForRpc(),
     });
     this.crud = new SessionCrudService(this.manager, this.presenter, () => this.open());
   }
@@ -148,24 +148,17 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
           this.postTheme();
           this.contextTracker?.post();
           this.presenter.repostUsage();
-          const rt = await this.manager.ensureActiveRuntime();
           const webviewSessionFile = message.sessionFile;
-          // Resume the session the user was last viewing (Claude-style resume-from-disk):
-          // after a reload the fresh broker cold-starts on pi's default session, so steer
-          // it back to the remembered one. A still-live runtime is already on it → no-op.
-          if (rt?.client?.isStarted && webviewSessionFile && await this.manager.isCurrentWorkspaceSession(webviewSessionFile)) {
-            const loaded = readSessionFile(await this.manager.requestState(rt.client));
-            if (!samePath(loaded, webviewSessionFile)) {
-              const response = await rt.client.request({ type: "switch_session", sessionPath: webviewSessionFile }, 30_000).catch(() => undefined);
-              if (response && response.success !== false) rt.sessionFile = webviewSessionFile;
-            }
-          }
-          // Re-seed the active session's view into the (reloaded) webview and show it.
-          if (rt) {
-            await this.manager.seedRuntime(rt, true);
-            this.presenter.post({ type: "activate", sessionId: rt.id });
+          if (webviewSessionFile && await this.manager.isCurrentWorkspaceSession(webviewSessionFile)) {
+            // Resume the session the user was last viewing (reload): force re-seed + activate so
+            // the persisted view is restored via the crash-restore (adoptPersistedView) path.
+            await this.manager.resumeSession(webviewSessionFile);
           } else {
+            // No remembered session → empty state. Nothing committed (composer + "Pi"
+            // placeholder); warm a spare so the first action opens instantly. Awaited so the
+            // model/auth probe below reuses this spare instead of spawning a second one.
             await this.manager.postState();
+            await this.manager.ensurePrewarm();
           }
           // Quiet auth check: the fetch outcome flows to AuthStatusService.noteModels,
           // which posts the authState verdict that gates the onboarding screen.
@@ -192,9 +185,9 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
           await this.manager.activateRuntime(message.sessionId);
           return;
         case "closeSession":
-          // Tab ×: reap the runtime; when it was the last one, open a fresh session so
-          // the strip always has a tab (newSession spawns + activates a new runtime).
-          if (!await this.manager.closeRuntime(message.sessionId, message.activateSessionId)) await this.newSession();
+          // Tab ×: reap the runtime. Closing the last tab lands on the empty state (composer +
+          // placeholder) — closeRuntime no longer auto-creates a replacement session.
+          await this.manager.closeRuntime(message.sessionId, message.activateSessionId);
           return;
         case "switchSession":
           await this.crud.switchSession(message.sessionPath);

@@ -1650,9 +1650,10 @@ a:hover { text-decoration: underline; }
 .usage-control-icon { position: relative; z-index: 1; color: currentColor; }
 .usage-popover {
   display: none;
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
+  /* position:fixed + JS clamp (popoverAnchor.ts): the action-row trigger sits mid-row,
+     so a CSS right:0 box wider than the room to its left spills off the panel's left
+     edge in a narrow side bar. JS measures and pins left/top within the viewport. */
+  position: fixed;
   z-index: 45;
   width: 230px;
   padding: 10px;
@@ -1756,9 +1757,7 @@ a:hover { text-decoration: underline; }
 /* Context-only hover popover (pure CSS — :hover / keyboard :focus on the cluster). */
 .stats-popover {
   display: none;
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
+  position: fixed; /* JS-clamped to the viewport — see .usage-popover / popoverAnchor.ts */
   width: 230px;
   padding: 11px 12px;
   border: 1px solid var(--border);
@@ -1940,6 +1939,13 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
      never push the model label / buttons onto a second line and shift the row height. */
   flex-wrap: nowrap;
   min-width: 0;
+  /* The send button is positioned absolutely at the right edge (below), so NO flow
+     control can ever push it off-screen or clip it — not the +, not the approval pill,
+     not the model picker. This padding reserves its lane so the flow items stop short
+     of it; overflow:hidden clips any overflowing flow item instead of the send button. */
+  position: relative;
+  padding-right: 43px;
+  overflow: hidden;
 }
 .ghost-button, .pill-button, .model-button {
   height: 30px;
@@ -1963,8 +1969,17 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
 .pill-button { padding: 0 9px; font-weight: 600; }
 .model-button {
   height: 30px;
+  /* The squeeze absorber for the action row: every other control is flex:0 0 auto
+     (fixed) and the spacer collapses to 0 first, so without a shrinkable item the row
+     overflows and clips the send button on narrow panels. The send button must NEVER
+     move or clip — so the model button gives up ALL its width first (min-width:0 +
+     overflow:hidden), collapsing toward zero and disappearing under pressure rather
+     than pushing the row past the panel edge. Label truncates (ellipsis below) on the
+     way down; below the breakpoint it hides entirely (media query). */
+  flex: 0 1 auto;
   min-width: 0;
   max-width: min(170px, 30vw);
+  overflow: hidden;
   padding: 0 8px 0 11px;
   border: 1px solid transparent;
   background: color-mix(in srgb, var(--fg) 6%, transparent);
@@ -2067,10 +2082,17 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
 }
 .spacer { flex: 1 1 auto; min-width: 0; }
 .send-button {
+  /* Pinned to the action row's right edge, out of flow — vertically centered via
+     margin:auto (NOT transform, so send-pop's scale animation stays intact). Nothing
+     in the flow can move or clip it. */
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  margin-block: auto;
   width: 36px;
   height: 36px;
   min-width: 36px;
-  flex: 0 0 36px;
   aspect-ratio: 1;
   padding: 0;
   border-radius: 999px;
@@ -2086,7 +2108,12 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
 }
 .send-button:hover { filter: brightness(1.08); }
 .send-button:active { transform: scale(.92); }
-.send-button.empty { opacity: .42; }
+/* Idle + nothing staged: send is inert. Fade it and kill the hover/press affordances so
+   it plainly reads as disabled. (Stop mode — running + empty — never gets .empty, so it
+   stays fully lit and clickable.) */
+.send-button.empty { opacity: .42; cursor: default; }
+.send-button.empty:hover { filter: none; }
+.send-button.empty:active { transform: none; }
 .send-button.sent { animation: send-pop 260ms ease; }
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(8px); }
@@ -2359,6 +2386,19 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
    send button stay on one line and never get clipped. */
 @media (max-width: 560px) {
   .pill-button .optional { display: none; }
+}
+/* Tighter still: once the model label is already at its truncation floor, shed the two
+   on-demand info chips (rate-limit usage, context %) so the model picker and send button
+   always survive. Both stay reachable elsewhere; the row staying intact matters more. */
+@media (max-width: 440px) {
+  #usageBars, #sessionStats { display: none !important; }
+}
+/* Floor: panel too narrow to host the model picker without crowding the pinned send
+   button. Drop the model button entirely — it reappears (and stays reachable) the
+   moment the panel widens. Send button position is unaffected (it is fixed-width and
+   last); the model button was the only shrinkable item, so hiding it frees the row. */
+@media (max-width: 360px) {
+  .model-button { display: none !important; }
 }
 @media (max-width: 520px) {
   .app { max-width: none; }

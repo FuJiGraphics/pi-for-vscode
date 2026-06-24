@@ -143,6 +143,11 @@
           "minimum": 0,
           "description": "Minutes the detached Pi background broker stays alive after VS Code disconnects. Set to 0 to stop immediately when idle."
         },
+        "pi-for-vscode.prewarmSession": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep one spare Pi process booted in the background so opening a new session (or sending the first message) is instant instead of waiting for a cold start. Costs one extra idle process per window; disable on low-memory machines."
+        },
         "pi-for-vscode.bundle.todo": {
           "type": "boolean",
           "default": true,

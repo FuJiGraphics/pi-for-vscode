@@ -31,6 +31,7 @@ export const state: AppState = new Proxy({} as AppState, {
 export const getActiveSessionId = (): string => store.getActiveSessionId();
 export const openViews = (): Array<{ id: string; view: AppState }> => store.openViews();
 export const activateSession = (id: string): boolean => store.activateSession(id);
+export const promoteProvisional = (id: string): boolean => store.promoteProvisional(id);
 export const closeSessionTab = (id: string): string | undefined => store.closeSessionTab(id);
 export const moveSessionTab = (id: string, targetId: string, placeAfter: boolean): boolean => store.moveSessionTab(id, targetId, placeAfter);
 export const withSession = (id: string, fn: () => void): void => store.withSession(id, fn);

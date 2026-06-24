@@ -102,7 +102,7 @@ test("ModelService.setModel sends official provider/modelId RPC", async () => {
       postSystem: (message: string) => posts.push({ type: "system", message }),
     } as any,
     {
-      ensureActiveRuntime: async () => ({ id: "rt", client } as any),
+      ensureRuntime: async () => ({ id: "rt", client } as any),
       requestState: async () => ({ model: { provider: "anthropic", id: "claude-sonnet-4-20250514" } }),
       postState: async () => undefined,
       reportRuntimeError: () => undefined,

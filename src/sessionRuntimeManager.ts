@@ -6,7 +6,7 @@ import type { SessionListItem } from "./protocol";
 import { isPiSessionInWorkspace, listPiSessions, readPiSessionCwd, type PiSessionSummary } from "./sessionStore";
 import { asRecord, toSessionListItem } from "./sessionFormat";
 import { readSessionFile } from "./stateHelpers";
-import { getWorkspaceCwd, getWorkspaceName, samePath } from "./workspace";
+import { getAgentCwd, getWorkspaceName, samePath } from "./workspace";
 import type { PiConfiguration, SessionRuntime } from "./sessionRuntime";
 import type { WebviewPresenter } from "./webviewPresenter";
 import type { RpcEventRouter, RpcEventSink } from "./rpcEventRouter";
@@ -19,6 +19,11 @@ import type { BundledExtensionResolver } from "./bundledExtensionResolver";
 export class SessionRuntimeManager {
   private readonly runtimes = new Map<string, SessionRuntime>();
   private activeRuntimeId?: string;
+  // A booted-but-uncommitted spare runtime (in `runtimes`, never the active one). Held warm so
+  // the next New Session / first prompt swaps to an already-started pi instead of paying the
+  // broker+pi cold-start. Promoted to active by commitNewActiveSession; replaced afterwards.
+  private prewarmId?: string;
+  private prewarmInFlight?: Promise<SessionRuntime | undefined>;
   // Called when a runtime becomes idle or is activated, so the auth-revocation service can
   // drain a pending registry refresh on the visible session. Set once by the composition root.
   private settledHook?: (rt: SessionRuntime) => void;
@@ -36,10 +41,6 @@ export class SessionRuntimeManager {
 
   activeId(): string | undefined {
     return this.activeRuntimeId;
-  }
-
-  setActiveRuntimeId(id: string | undefined): void {
-    this.activeRuntimeId = id;
   }
 
   setSettledHook(hook: (rt: SessionRuntime) => void): void {
@@ -109,7 +110,11 @@ export class SessionRuntimeManager {
   // list), tagged with the runtime id. Done once per runtime; thereafter the webview keeps
   // the view live from tagged events, so switching back never re-fetches or drops the
   // timeline. Pass force=true to re-seed (after a model restart / reconnect / reload).
-  async seedRuntime(rt: SessionRuntime, force = false): Promise<void> {
+  // `preserveRunning` omits isStreaming from the posted state so the webview's running flag is
+  // left as-is. Used when committing a brand-new session under an OPTIMISTIC turn (the user's
+  // first message already lit the spinner): a fresh session reports isStreaming=false, and
+  // letting that through would blink the spinner off until the prompt's running:true lands.
+  async seedRuntime(rt: SessionRuntime, force = false, preserveRunning = false): Promise<void> {
     const client = rt.client;
     if (!client?.isStarted) return;
     if (rt.seeded && !force) return;
@@ -117,9 +122,13 @@ export class SessionRuntimeManager {
     const stateData = await this.requestState(client);
     if (stateData) {
       rt.sessionFile = readSessionFile(stateData);
-      this.presenter.post({ type: "state", sessionId: rt.id, state: { ...stateData, workspaceName } });
+      const state: Record<string, unknown> = { ...stateData, workspaceName };
+      if (preserveRunning) delete state.isStreaming;
+      this.presenter.post({ type: "state", sessionId: rt.id, state });
     } else {
-      this.presenter.post({ type: "state", sessionId: rt.id, state: { isStreaming: false, sessionFile: rt.sessionFile, model: undefined, workspaceName } });
+      const state: Record<string, unknown> = { sessionFile: rt.sessionFile, model: undefined, workspaceName };
+      if (!preserveRunning) state.isStreaming = false;
+      this.presenter.post({ type: "state", sessionId: rt.id, state });
     }
     const response = await client.request({ type: "get_messages" }, 10_000).catch(() => undefined);
     const data = asRecord(response?.data);
@@ -142,8 +151,7 @@ export class SessionRuntimeManager {
   }
 
   async collectSessions(): Promise<PiSessionSummary[]> {
-    const cwd = getWorkspaceCwd();
-    if (!cwd) return [];
+    const cwd = getAgentCwd();
     // Use the active runtime's tracked session file for the "current" marker — no RPC,
     // so the frequent (per agent_start/agent_end) badge refresh stays cheap.
     const currentSessionFile = this.active?.sessionFile;
@@ -152,45 +160,158 @@ export class SessionRuntimeManager {
 
   // ---- runtime lifecycle ----
 
-  // Returns a usable active runtime, creating one when there is none (first prompt /
-  // command palette / view ready). Reuses the existing active runtime, shutting it down
-  // only when its loaded session belongs to a different workspace (foreign-state guard).
+  // Commit a VISIBLE active session, creating a fresh one when there is none. This is the
+  // lazy-commit point: only a prompt (the user's first message) calls it, so a new session
+  // crystallizes on send rather than on launch. Reuses a usable existing active runtime.
   async ensureActiveRuntime(): Promise<SessionRuntime | undefined> {
-    const cwd = getWorkspaceCwd();
-    if (!cwd) {
-      this.presenter.postSystem("Open a workspace folder to start a project-scoped Pi session.");
+    const cwd = getAgentCwd();
+    const existing = await this.resolveExistingActive(cwd);
+    if (existing) return existing;
+    return this.commitNewActiveSession(cwd);
+  }
+
+  // Return a live runtime to TALK to pi (models / commands / auth probe) WITHOUT committing a
+  // visible session. Prefers the active runtime; otherwise uses the warm spare. Used while the
+  // chat is in its empty state so the onboarding/auth verdict can resolve before the user sends.
+  async ensureRuntimeForRpc(): Promise<SessionRuntime | undefined> {
+    const cwd = getAgentCwd();
+    const existing = await this.resolveExistingActive(cwd);
+    if (existing) return existing;
+    return this.ensurePrewarm(cwd);
+  }
+
+  // Reuse the existing active runtime when it is usable; reap/drop it otherwise (foreign-state
+  // guard + crash respawn). Returns the usable active runtime, or undefined when there is none
+  // (the caller then either commits a new session or falls back to the warm spare).
+  private async resolveExistingActive(cwd: string): Promise<SessionRuntime | undefined> {
+    const rt = this.active;
+    if (!rt) return undefined;
+    if (rt.client?.isStarted) {
+      if (rt.isRunning) return rt;
+      if (samePath(rt.cwd, cwd)) {
+        const state = await this.getClientState(rt);
+        if (!state || !await this.isForeignWorkspaceState(state, cwd)) return rt;
+        await this.reapRuntime(rt);
+      } else {
+        await this.reapRuntime(rt);
+      }
+    } else if (samePath(rt.cwd, cwd)) {
+      // Active runtime's pi died (crash / reconnect exhausted) → respawn it in place.
+      if (await this.reviveRuntime(rt)) {
+        void this.postState();
+        return rt;
+      }
+      this.dropRuntime(rt);
+    } else {
+      this.dropRuntime(rt);
+    }
+    return undefined;
+  }
+
+  // Promote the warm spare (or spawn fresh) into a brand-new active session: ask pi for a clean
+  // session, then activate + seed. Because the spare's pi is already booted, this swaps in
+  // instantly instead of paying the broker+pi cold-start. Posts `activate` BEFORE the seed so a
+  // provisional webview view (an optimistic first message) is re-keyed, not clobbered.
+  async commitNewActiveSession(cwd: string): Promise<SessionRuntime | undefined> {
+    const previous = this.active;
+    const rt = this.takePrewarm(cwd) ?? await this.createRuntime(cwd);
+    if (!rt?.client) return undefined;
+
+    const response = await rt.client.request({ type: "new_session" });
+    if (response.success === false) {
+      this.presenter.postSystem(`Failed to start a new session: ${String(response.error ?? "unknown error")}`);
+      await this.reapRuntime(rt);
+      return undefined;
+    }
+    if (asRecord(response.data)?.cancelled === true) {
+      await this.reapRuntime(rt);
       return undefined;
     }
 
-    const rt = this.active;
-    if (rt) {
-      if (rt.client?.isStarted) {
-        if (rt.isRunning) return rt;
-        if (samePath(rt.cwd, cwd)) {
-          const state = await this.getClientState(rt);
-          if (!state || !await this.isForeignWorkspaceState(state, cwd)) return rt;
-          await this.reapRuntime(rt);
-        } else {
-          await this.reapRuntime(rt);
-        }
-      } else if (samePath(rt.cwd, cwd)) {
-        // Active runtime's pi died (crash / reconnect exhausted) → respawn it in place.
-        if (await this.reviveRuntime(rt)) {
-          void this.postState();
-          return rt;
-        }
+    this.activeRuntimeId = rt.id;
+    if (previous && previous !== rt) this.handleSwitchAway(previous);
+    this.presenter.post({ type: "activate", sessionId: rt.id });
+    await this.seedRuntime(rt, false, true); // preserveRunning: don't blink an optimistic spinner
+    await this.postSessionList();
+    void this.ensurePrewarm(cwd); // re-arm the spare for the next new session
+    return rt;
+  }
+
+  // Restore the session the user was last viewing after a webview reload. Reuses a live runtime
+  // already on it; otherwise takes the warm spare (or spawns one) and steers it onto the file.
+  // FORCE re-seeds so the freshly reloaded webview gets the full state + message list — the
+  // host-side runtime may still be flagged `seeded` from before the reload. Seed BEFORE activate
+  // so the webview's crash-restore (adoptPersistedView) adopts the persisted timeline.
+  async resumeSession(sessionFile: string): Promise<void> {
+    const cwd = getAgentCwd();
+    let rt = this.findRuntimeBySessionFile(sessionFile);
+    if (!rt) {
+      rt = this.takePrewarm(cwd) ?? await this.createRuntime(cwd);
+      if (!rt?.client) return;
+      const response = await rt.client.request({ type: "switch_session", sessionPath: sessionFile }, 30_000).catch(() => undefined);
+      if (!response || response.success === false || asRecord(response.data)?.cancelled === true) {
+        await this.reapRuntime(rt);
+        return;
+      }
+      rt.sessionFile = sessionFile;
+    } else if (!rt.client?.isStarted) {
+      if (!await this.reviveRuntime(rt)) {
         this.dropRuntime(rt);
-      } else {
-        this.dropRuntime(rt);
+        return;
+      }
+      // A cold revive relaunches a fresh broker whose pi has no session yet — steer it back.
+      const state = await this.requestState(rt.client!);
+      if (!samePath(readSessionFile(state), sessionFile)) {
+        await rt.client!.request({ type: "switch_session", sessionPath: sessionFile }, 30_000).catch(() => undefined);
       }
     }
 
-    const fresh = await this.createRuntime(cwd);
-    if (fresh) {
-      this.activeRuntimeId = fresh.id;
-      void this.postState();
+    this.activeRuntimeId = rt.id;
+    await this.seedRuntime(rt, true);
+    this.presenter.post({ type: "activate", sessionId: rt.id });
+    void this.ensurePrewarm(cwd); // warm a spare for the next new session
+  }
+
+  // Keep exactly one booted-but-uncommitted spare ready (when enabled and a workspace is open).
+  // Returns the live spare, spawning one if needed; a stale/foreign spare is reaped first.
+  // Concurrent callers (ready + the model/auth probe both reach for it) share ONE spawn via the
+  // in-flight guard, so we never leak a second orphan runtime.
+  async ensurePrewarm(cwd?: string): Promise<SessionRuntime | undefined> {
+    if (!this.getConfiguration().prewarmSession) return undefined;
+    const target = cwd ?? getAgentCwd();
+
+    const existing = this.prewarmId ? this.runtimes.get(this.prewarmId) : undefined;
+    if (existing) {
+      if (existing.client?.isStarted && samePath(existing.cwd, target)) return existing;
+      this.prewarmId = undefined;
+      await this.reapRuntime(existing);
     }
-    return fresh;
+
+    if (this.prewarmInFlight) return this.prewarmInFlight;
+    this.prewarmInFlight = this.spawnPrewarm(target).finally(() => { this.prewarmInFlight = undefined; });
+    return this.prewarmInFlight;
+  }
+
+  private async spawnPrewarm(target: string): Promise<SessionRuntime | undefined> {
+    const rt = await this.createRuntime(target);
+    if (rt) this.prewarmId = rt.id;
+    return rt;
+  }
+
+  // Claim the warm spare for promotion to active (clearing the spare slot). Returns it only when
+  // it is live and belongs to this workspace; otherwise reaps a foreign/dead spare and returns
+  // undefined so the caller spawns a fresh runtime.
+  private takePrewarm(cwd: string): SessionRuntime | undefined {
+    const id = this.prewarmId;
+    if (!id) return undefined;
+    this.prewarmId = undefined;
+    const rt = this.runtimes.get(id);
+    if (!rt) return undefined;
+    if (!rt.client?.isStarted || !samePath(rt.cwd, cwd)) {
+      void this.reapRuntime(rt);
+      return undefined;
+    }
+    return rt;
   }
 
   // Build a brand-new runtime (fresh instanceId → its own broker/socket/pi) and connect it.
@@ -297,6 +418,7 @@ export class SessionRuntimeManager {
     this.disconnectRuntime(rt);
     this.runtimes.delete(rt.id);
     if (this.activeRuntimeId === rt.id) this.activeRuntimeId = undefined;
+    if (this.prewarmId === rt.id) this.prewarmId = undefined;
   }
 
   // Fully remove a runtime, asking its broker to shut down now (used for foreign-workspace
@@ -307,12 +429,14 @@ export class SessionRuntimeManager {
     rt.client = undefined;
     this.runtimes.delete(rt.id);
     if (this.activeRuntimeId === rt.id) this.activeRuntimeId = undefined;
+    if (this.prewarmId === rt.id) this.prewarmId = undefined;
     // The runtime is gone for good — let the webview forget its cached view too.
     this.presenter.post({ type: "dropSession", sessionId: rt.id });
-    if (client?.isStarted) {
-      await client.request({ type: "broker_shutdown" }, 5_000).catch(() => undefined);
-    }
-    client?.dispose();
+    // Fire-and-forget the broker shutdown: the shutdown line is written synchronously into the
+    // socket buffer, then we tear down WITHOUT awaiting the round-trip. The detached broker's
+    // idle timeout backstops if the line never lands. (Awaiting a 5s-timeout RPC here made
+    // delete/close feel laggy for no benefit — the user has already moved on.)
+    client?.disposeAndShutdownBroker();
   }
 
   async reapAllRuntimes(): Promise<void> {
@@ -323,22 +447,32 @@ export class SessionRuntimeManager {
   // Close one open session tab. This is intentionally immediate from the user's point of
   // view: the webview already removed the visual tab optimistically; the host now reaps the
   // runtime. The on-disk session file survives and remains reopenable from History.
-  // Returns false when no runtime remains — the caller starts a fresh session so the strip
-  // always shows at least one tab (Chrome-style).
-  async closeRuntime(id: string, preferredNextId?: string): Promise<boolean> {
+  // Closing the LAST open tab lands on the empty state (composer + placeholder) — no session is
+  // auto-created; a fresh one is committed only when the user sends or clicks New Session.
+  async closeRuntime(id: string, preferredNextId?: string): Promise<void> {
     const rt = this.runtimes.get(id);
-    if (!rt) return true;
+    if (!rt) return;
     const wasActive = this.activeRuntimeId === rt.id;
     await this.reapRuntime(rt);
     if (!wasActive) {
       await this.postSessionList();
-      return true;
+      return;
     }
-    const remaining = [...this.runtimes.keys()];
-    const nextId = preferredNextId && this.runtimes.has(preferredNextId) ? preferredNextId : remaining[remaining.length - 1];
-    if (!nextId) return false;
-    await this.activateRuntime(nextId); // posts activate + refreshes the session list
-    return true;
+    // Pick the next OPEN tab to show — never the warm spare (it must stay uncommitted).
+    const remaining = [...this.runtimes.keys()].filter((key) => key !== this.prewarmId);
+    const nextId = preferredNextId && preferredNextId !== this.prewarmId && this.runtimes.has(preferredNextId)
+      ? preferredNextId
+      : remaining[remaining.length - 1];
+    if (nextId) {
+      await this.activateRuntime(nextId); // posts activate + refreshes the session list
+      return;
+    }
+    // Closed the last open session → empty state. Keep a spare warm for the next new session;
+    // the webview already dropped the tab and shows its "Pi" placeholder + empty composer.
+    this.activeRuntimeId = undefined;
+    await this.postState();
+    await this.postSessionList();
+    void this.ensurePrewarm();
   }
 
   // A background runtime finished its turn: drop its client so the broker idle-reaps the
@@ -474,8 +608,9 @@ export class SessionRuntimeManager {
   // if needed and resync. ensureActiveRuntime reuses a live broker or relaunches one.
   async forceReconnect(): Promise<void> {
     this.presenter.postConnection("reconnecting");
-    const rt = await this.ensureActiveRuntime();
-    if (rt?.client) await this.resync();
+    // Reconnect/revive the active runtime if there is one; never commit a new session here.
+    const rt = await this.ensureRuntimeForRpc();
+    if (rt?.client && this.active) await this.resync();
     else this.presenter.postConnection("disconnected");
   }
 
@@ -486,12 +621,12 @@ export class SessionRuntimeManager {
       persistSessions: config.get<boolean>("persistSessions", true),
       defaultStreamingBehavior: config.get<"followUp" | "steer">("defaultStreamingBehavior", "steer"),
       brokerIdleTimeoutMinutes: config.get<number>("brokerIdleTimeoutMinutes", 30),
+      prewarmSession: config.get<boolean>("prewarmSession", true),
     };
   }
 
   isCurrentWorkspaceSession(sessionPath: string): Promise<boolean> {
-    const cwd = getWorkspaceCwd();
-    return Promise.resolve(cwd ? isPiSessionInWorkspace(sessionPath, cwd) : false).then(Boolean);
+    return isPiSessionInWorkspace(sessionPath, getAgentCwd()).then(Boolean);
   }
 
   // Best-effort teardown on extension dispose: ask each detached broker to shut down so no
@@ -504,5 +639,6 @@ export class SessionRuntimeManager {
     }
     this.runtimes.clear();
     this.activeRuntimeId = undefined;
+    this.prewarmId = undefined;
   }
 }

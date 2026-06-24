@@ -6,7 +6,7 @@ import { buildSourceTag } from "./stateHelpers";
 
 /** Manager surface the palette borrows to reach the active runtime's client. */
 export interface CommandPaletteDeps {
-  ensureActiveRuntime(): Promise<SessionRuntime | undefined>;
+  ensureRuntime(): Promise<SessionRuntime | undefined>;
 }
 
 // Builds the slash-command palette by asking the active pi for its commands (get_commands)
@@ -15,7 +15,7 @@ export class CommandPaletteService {
   constructor(private readonly presenter: WebviewPresenter, private readonly deps: CommandPaletteDeps) {}
 
   async postCommandList(): Promise<void> {
-    const rt = await this.deps.ensureActiveRuntime();
+    const rt = await this.deps.ensureRuntime();
     if (!rt?.client) {
       this.presenter.post({ type: "commandList", commands: [] });
       return;

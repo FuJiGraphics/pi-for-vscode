@@ -1,3 +1,4 @@
+import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
@@ -12,8 +13,17 @@ export function getWorkspaceTarget(): WorkspaceTarget {
   return { cwd: folder.uri.fsPath, name: folder.name };
 }
 
+// The active workspace folder, or undefined when VS Code has no folder open (an empty window).
 export function getWorkspaceCwd(): string | undefined {
   return getWorkspaceTarget().cwd;
+}
+
+// The directory Pi actually runs in: the workspace folder when one is open, else the home dir.
+// Mirrors Claude Code, which works in a folderless window (it just operates from a default cwd);
+// the extension must not refuse to start a session merely because no folder is open. Sessions
+// opened this way are scoped under the home dir's session store, same as any other project.
+export function getAgentCwd(): string {
+  return getWorkspaceCwd() ?? os.homedir();
 }
 
 export function getWorkspaceName(cwd?: string): string | undefined {

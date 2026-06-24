@@ -301,11 +301,72 @@ async function collectSessionFiles(root: string): Promise<string[]> {
   return result;
 }
 
+// The expensive, file-content-derived part of a summary — everything that needs a full
+// read+parse of the .jsonl. Cached by (path, mtime, size) so the frequent session-list
+// refresh (postSessionList runs on create/delete/switch/rename/background-run toggles)
+// re-reads ONLY files that actually changed instead of re-parsing every session each time.
+interface SessionCore {
+  sessionCwd?: string;
+  sessionName?: string;
+  firstUserMessage?: string;
+  lastMessage?: string;
+  createdAt?: number;
+  updatedAt: number;
+  messageCount: number;
+  birthtimeMs: number;
+}
+
+const coreCache = new Map<string, { mtimeMs: number; size: number; core: SessionCore }>();
+const CORE_CACHE_MAX = 500;
+
 async function parseSessionFile(filePath: string, cwd?: string, currentSessionFile?: string): Promise<PiSessionSummary | undefined> {
-  let stat: { mtimeMs: number; birthtimeMs: number };
-  let text: string;
+  let stat: { mtimeMs: number; size: number; birthtimeMs: number };
   try {
     stat = await fs.stat(filePath);
+  } catch {
+    return undefined;
+  }
+
+  const resolved = path.resolve(filePath);
+  const cached = coreCache.get(resolved);
+  let core: SessionCore | undefined;
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    core = cached.core;
+  } else {
+    core = await parseSessionCore(filePath, stat);
+    if (!core) return undefined;
+    if (coreCache.size > CORE_CACHE_MAX) coreCache.clear(); // bound memory; deleted files leave stale keys
+    coreCache.set(resolved, { mtimeMs: stat.mtimeMs, size: stat.size, core });
+  }
+
+  const normalizedCwd = cwd ? normalizePath(cwd) : undefined;
+  const normalizedSessionCwd = core.sessionCwd ? normalizePath(core.sessionCwd) : undefined;
+  const isCurrentWorkspace = Boolean(normalizedCwd && normalizedSessionCwd && normalizedCwd === normalizedSessionCwd);
+  const isCurrent = Boolean(currentSessionFile && resolved === currentSessionFile);
+
+  const title = truncate(core.sessionName || core.firstUserMessage || path.basename(filePath, ".jsonl"), 90);
+  const preview = core.lastMessage && core.lastMessage !== title ? truncate(core.lastMessage, 140) : undefined;
+
+  return {
+    filePath,
+    cwd: core.sessionCwd,
+    title,
+    preview,
+    name: core.sessionName,
+    firstUserMessage: core.firstUserMessage,
+    lastMessage: core.lastMessage,
+    messageCount: core.messageCount,
+    createdAt: core.createdAt ?? core.birthtimeMs,
+    updatedAt: core.updatedAt,
+    isCurrent,
+    isCurrentWorkspace,
+  };
+}
+
+// Read+parse a session file into its content-derived core. Returns undefined for an empty file.
+async function parseSessionCore(filePath: string, stat: { mtimeMs: number; birthtimeMs: number }): Promise<SessionCore | undefined> {
+  let text: string;
+  try {
     text = await fs.readFile(filePath, "utf8");
   } catch {
     return undefined;
@@ -348,40 +409,19 @@ async function parseSessionFile(filePath: string, cwd?: string, currentSessionFi
     const role = entry.message.role;
     if (role !== "user" && role !== "assistant") continue;
 
-    const text = contentToText(entry.message.content).trim();
-    if (!text) continue;
+    const messageText = contentToText(entry.message.content).trim();
+    if (!messageText) continue;
 
     messageCount++;
-    if (role === "user" && !firstUserMessage) firstUserMessage = text;
-    lastMessage = text;
+    if (role === "user" && !firstUserMessage) firstUserMessage = messageText;
+    lastMessage = messageText;
 
     if (typeof entry.message.timestamp === "number") {
       updatedAt = Math.max(updatedAt, entry.message.timestamp);
     }
   }
 
-  const normalizedCwd = cwd ? normalizePath(cwd) : undefined;
-  const normalizedSessionCwd = sessionCwd ? normalizePath(sessionCwd) : undefined;
-  const isCurrentWorkspace = Boolean(normalizedCwd && normalizedSessionCwd && normalizedCwd === normalizedSessionCwd);
-  const isCurrent = Boolean(currentSessionFile && path.resolve(filePath) === currentSessionFile);
-
-  const title = truncate(sessionName || firstUserMessage || path.basename(filePath, ".jsonl"), 90);
-  const preview = lastMessage && lastMessage !== title ? truncate(lastMessage, 140) : undefined;
-
-  return {
-    filePath,
-    cwd: sessionCwd,
-    title,
-    preview,
-    name: sessionName,
-    firstUserMessage,
-    lastMessage,
-    messageCount,
-    createdAt: createdAt ?? stat.birthtimeMs,
-    updatedAt,
-    isCurrent,
-    isCurrentWorkspace,
-  };
+  return { sessionCwd, sessionName, firstUserMessage, lastMessage, createdAt, updatedAt, messageCount, birthtimeMs: stat.birthtimeMs };
 }
 
 function getDefaultProjectSessionDir(cwd: string): string {

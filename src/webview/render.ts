@@ -476,8 +476,14 @@ export function render(): void {
 
   if (state.messages.length === 0) {
     if (!emptyRendered) {
+      // Empty-state hero (no open session, or a fresh conversation with no messages yet): the
+      // pi mark + a short greeting give the void a deliberate landing instead of a bare panel.
+      // Reuses .boot-inner (flex column + gap) and .pi-mark.boot (drops in once) so it needs no
+      // new CSS; on first launch the boot-splash overlay covers this until it settles.
       messagesEl.innerHTML =
-        '<div class="empty"><strong>Ready when you are.</strong>Ask Pi to work in this project from the composer below.</div>';
+        '<div class="empty"><div class="boot-inner">' + piMarkHtml("boot") +
+        '<div><strong>Start a new conversation</strong>Type a message below to get started.</div>' +
+        '</div></div>';
       renderedNodes.clear();
       emptyRendered = true;
     }

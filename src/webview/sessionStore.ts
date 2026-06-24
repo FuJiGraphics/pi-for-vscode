@@ -89,6 +89,23 @@ export class SessionViewStore {
     return true;
   }
 
+  // Re-key the PROVISIONAL active view (the empty-state composer, which has no runtime id and
+  // no session file) to its real runtime id on the first commit. The composer view — including
+  // an optimistic first message + its spinner — becomes the new session's view instead of being
+  // discarded for a blank one, so committing out of the empty state has no flicker. Marks the id
+  // restored so the host's empty disk re-seed (sessionMessages) is skipped, exactly as
+  // crash-restore protects an in-memory timeline.
+  promoteProvisional(id: string): boolean {
+    if (!id || id === this.activeId) return false;
+    const view = this.activeView;
+    this.views.delete(this.activeId); // drop the "" placeholder key if it was ever registered
+    this.activeId = id;
+    this.views.set(id, view);
+    this.activeView = view;
+    this.restoredIds.add(id);
+    return true;
+  }
+
   // Run `fn` against a specific session's view. The active session renders normally; a
   // background session's view is updated in place WITHOUT rendering.
   withSession(id: string, fn: () => void): void {

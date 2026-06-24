@@ -27,4 +27,6 @@ export interface PiConfiguration {
   persistSessions: boolean;
   defaultStreamingBehavior: "followUp" | "steer";
   brokerIdleTimeoutMinutes: number;
+  /** Keep one spare pi runtime booted in the background so a new session opens instantly. */
+  prewarmSession: boolean;
 }

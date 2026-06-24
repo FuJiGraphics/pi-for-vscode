@@ -4,8 +4,14 @@
 // Data: pi's get_session_stats (state.stats, per-session).
 import { state } from "./state";
 import { sessionStatsEl } from "./dom";
+import { anchorPopover } from "./popoverAnchor";
 import { escapeHtml, formatCost, formatTokens } from "./util";
 import type { SessionStats } from "../protocol";
+
+/** Wire the context gauge's hover/focus popover to stay inside the viewport. */
+export function initSessionStats(): void {
+  anchorPopover(sessionStatsEl, ".stats-popover");
+}
 
 /** "12.3k tokens · $0.42" — cost omitted for free models (formatCost drops $0). */
 export function statsSummary(stats: SessionStats): string {

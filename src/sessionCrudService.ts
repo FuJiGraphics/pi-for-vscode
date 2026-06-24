@@ -2,7 +2,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { deleteSession, renameSession } from "./sessionStore";
 import { asRecord, toSessionQuickPickItem, type SessionQuickPickItem } from "./sessionFormat";
-import { getWorkspaceCwd, samePath } from "./workspace";
+import { getAgentCwd, samePath } from "./workspace";
 import type { SessionRuntimeManager } from "./sessionRuntimeManager";
 import type { WebviewPresenter } from "./webviewPresenter";
 
@@ -18,45 +18,16 @@ export class SessionCrudService {
     private readonly open: () => Promise<void>,
   ) {}
 
-  // New Session is a genuinely new execution unit: spawn a fresh runtime so any
-  // previously-active (and possibly still-running) session keeps its own pi alive.
+  // New Session is a genuinely new execution unit: any previously-active (and possibly still
+  // running) session keeps its own pi alive in the background. The manager reuses the warm
+  // spare when one is ready, so this opens instantly instead of paying a cold pi spawn.
   async newSession(): Promise<void> {
-    const cwd = getWorkspaceCwd();
-    if (!cwd) {
-      this.presenter.postSystem("Open a workspace folder to start a project-scoped Pi session.");
-      return;
-    }
-    const previous = this.manager.active;
-    const rt = await this.manager.createRuntime(cwd);
-    if (!rt?.client) return;
-
-    const response = await rt.client.request({ type: "new_session" });
-    if (response.success === false) {
-      this.presenter.postSystem(`Failed to start a new session: ${String(response.error ?? "unknown error")}`);
-      await this.manager.reapRuntime(rt);
-      return;
-    }
-    const data = asRecord(response.data);
-    if (data?.cancelled === true) {
-      await this.manager.reapRuntime(rt);
-      return;
-    }
-
-    this.manager.setActiveRuntimeId(rt.id);
-    if (previous && previous !== rt) this.manager.handleSwitchAway(previous);
-    this.manager.setRunning(rt, false);
-    await this.manager.seedRuntime(rt);
-    this.presenter.post({ type: "activate", sessionId: rt.id });
-    await this.manager.postSessionList();
+    await this.manager.commitNewActiveSession(getAgentCwd());
   }
 
   async sessions(): Promise<void> {
     await this.open();
-    const cwd = getWorkspaceCwd();
-    if (!cwd) {
-      this.presenter.postSystem("Open a workspace folder to view project-scoped Pi sessions.");
-      return;
-    }
+    const cwd = getAgentCwd();
     const summaries = await this.manager.collectSessions();
 
     const items: SessionQuickPickItem[] = [
@@ -114,12 +85,7 @@ export class SessionCrudService {
       return;
     }
 
-    const cwd = getWorkspaceCwd();
-    if (!cwd) {
-      this.presenter.postSystem("Open a workspace folder to start a project-scoped Pi session.");
-      return;
-    }
-    const rt = await this.manager.createRuntime(cwd);
+    const rt = await this.manager.createRuntime(getAgentCwd());
     if (!rt?.client) return;
 
     const response = await rt.client.request({ type: "switch_session", sessionPath }, 30_000);
