@@ -41,6 +41,11 @@ export class WebviewPresenter {
   }
 
   postSystem(text: string): void {
+    // Teardown noise, not user information: when a runtime is reaped (tab closed, session
+    // deleted, window closing) its in-flight RPCs reject with this exact message, and the
+    // rejections bubble up through whatever await was pending. Showing it painted a scary
+    // "pi RPC client disposed" system bubble right after closing the last tab.
+    if (text.includes("pi RPC client disposed")) return;
     this.post({ type: "system", text });
   }
 

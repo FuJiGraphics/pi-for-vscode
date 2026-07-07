@@ -14,7 +14,7 @@ import { authModalRootEl, onboardingRootEl } from "./dom";
 import { post } from "./bridge";
 import { piMarkHtml } from "./piMark";
 import { authStatus, isAuthAvailable, subscribeAuthState } from "./authState";
-import { cancelActiveDialog, registerDialogHost } from "./extensionUi";
+import { cancelActiveDialog, registerDialogHost, suppressPendingDialogs } from "./extensionUi";
 import { openModelPicker } from "./modelPicker";
 import { escapeHtml } from "./util";
 
@@ -50,6 +50,10 @@ function cardsHtml(): string {
     '<div class="onboarding-card-title">Use an API key</div>' +
     '<div class="onboarding-card-desc">Paste a provider API key</div>' +
     "</button>" +
+    '<button class="onboarding-card" data-onboard="local">' +
+    '<div class="onboarding-card-title">Use a local model</div>' +
+    '<div class="onboarding-card-desc">Ollama, LM Studio, or any OpenAI-compatible server</div>' +
+    "</button>" +
     "</div>"
   );
 }
@@ -63,9 +67,14 @@ function noticeHtml(): string {
 // and the modal each host the pi dialog in their own node).
 function bodyHtml(stepRootId: string): string {
   if (phase === "authenticating") {
+    // No "Signing in…" headline here: the pi dialog that lands in the step root brings
+    // its OWN title ("Select API key provider:" …) — two stacked headlines was exactly
+    // the cluttered double-header the old flow showed. Until it lands, the step root
+    // holds a quiet placeholder that the dialog render replaces wholesale.
     return (
-      '<div class="onboarding-tagline">Signing in…</div>' +
-      '<div id="' + stepRootId + '" class="onboarding-step-root"></div>' +
+      '<div id="' + stepRootId + '" class="onboarding-step-root">' +
+      '<div class="ext-step-wait">Contacting Pi…</div>' +
+      "</div>" +
       noticeHtml() +
       '<button class="onboarding-back" data-onboard="back">Back</button>'
     );
@@ -174,6 +183,9 @@ export function openModelInvalidatedModal(previousModel?: string): void {
 export function closeAuthModal(): void {
   if (mode !== "modal") return;
   cancelActiveDialog(); // resolve any awaited pi dialog as cancelled so pi doesn't hang
+  // …and swallow the flow's NEXT dialog if it was already in flight when the cancel
+  // landed — otherwise it pops up over the bare chat as an orphaned overlay.
+  if (phase === "authenticating") suppressPendingDialogs();
   mode = "hidden";
   phase = "cards";
   notice = "";
@@ -205,9 +217,10 @@ export function onboardingConnectionChange(status: "reconnecting" | "connected" 
   render();
 }
 
-// Shared by the cards in both surfaces (subscription / api-key / back / recheck).
+// Shared by the cards in both surfaces (subscription / api-key / local / back / recheck).
 function handleOnboardAction(action: string): void {
-  if (action === "subscription" || action === "api-key") {
+  if (action === "subscription" || action === "api-key" || action === "local") {
+    if (phase === "authenticating") return; // a flow is already in flight — no double /login
     phase = "authenticating";
     notice = "";
     render();

@@ -31,7 +31,12 @@ export class CommandPaletteService {
     for (const entry of raw) {
       const record = asRecord(entry);
       if (!record || typeof record.name !== "string") continue;
-      const source = record.source === "skill" || record.source === "prompt" ? record.source : "extension";
+      // Agent-facing entries stay OUT of the user palette: pi skills are loaded for the
+      // MODEL (surfacing them as slash entries read as broken UI features), and
+      // refresh-auth is the auth bridge's VS-Code-internal registry reload hook. Typing
+      // "/skill:name" manually still works — pi parses the prompt itself.
+      if (record.source === "skill" || record.name === "refresh-auth") continue;
+      const source = record.source === "prompt" ? record.source : "extension";
       const sourceInfo = asRecord(record.sourceInfo);
       const scope = sourceInfo?.scope === "user" || sourceInfo?.scope === "project" || sourceInfo?.scope === "temporary"
         ? sourceInfo.scope

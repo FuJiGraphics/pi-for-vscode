@@ -40,3 +40,16 @@ test("a failed get_commands posts an empty list WITHOUT an authAvailable verdict
   assert.deepEqual(posts[0], { type: "commandList", commands: [] });
   assert.equal("authAvailable" in posts[0], false);
 });
+
+test("agent-facing entries are hidden: skills and the internal refresh-auth hook", async () => {
+  const { service, posts } = serviceWith([
+    { name: "login", description: "Sign in", source: "extension" },
+    { name: "refresh-auth", description: "internal reload hook", source: "extension" },
+    { name: "skill:deploy-checklist", description: "agent skill", source: "skill" },
+    { name: "review", description: "", source: "prompt" },
+  ]);
+  await service.postCommandList();
+  const names = posts[0].commands.map((command: { name: string }) => command.name);
+  assert.deepEqual(names, ["login", "review"]);
+  assert.equal(posts[0].authAvailable, true); // login survives the filter
+});

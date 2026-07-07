@@ -85,7 +85,8 @@ export class SessionCrudService {
       return;
     }
 
-    const rt = await this.manager.createRuntime(getAgentCwd());
+    // Reuse the warm spare so opening from History is instant (no broker+pi cold-start).
+    const rt = await this.manager.acquireRuntimeForSwitch(getAgentCwd());
     if (!rt?.client) return;
 
     const response = await rt.client.request({ type: "switch_session", sessionPath }, 30_000);

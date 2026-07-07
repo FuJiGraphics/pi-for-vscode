@@ -207,6 +207,15 @@ export interface ImageAttachment {
 export type WebviewToExtensionMessage =
   | { type: "ready"; hasMessages?: boolean; sessionFile?: string }
   | { type: "prompt"; text: string; images?: ImageAttachment[] }
+  // Edit-rewind: fork the active session just BEFORE its `userOrdinal`-th user message
+  // (pi's fork RPC — the original session file survives as-is on disk) and resend `text`.
+  // `userOrdinal` indexes user messages WITH TEXT, matching pi's get_fork_messages order;
+  // `originalText` double-checks the ordinal resolved to the intended message.
+  | { type: "editMessage"; userOrdinal: number; originalText: string; text: string; images?: ImageAttachment[] }
+  // Manual context compaction of the active session (pi's `compact` RPC).
+  | { type: "compactSession" }
+  // Export the active session as a standalone HTML file (pi's `export_html` RPC).
+  | { type: "exportSession" }
   | { type: "abort" }
   | { type: "newSession" }
   | { type: "sessions" }
@@ -226,7 +235,9 @@ export type WebviewToExtensionMessage =
   | { type: "setThinkingLevel"; level: string }
   // Auth flows run through pi's auth-bridge commands; `method`/`provider` pre-answer the
   // bridge's first select so the onboarding cards / settings rows skip a redundant dialog.
-  | { type: "login"; method?: "subscription" | "api-key" }
+  // "local" runs the bridge's add-local-model flow (an Ollama / LM Studio / OpenAI-
+  // compatible endpoint written to pi's ~/.pi/agent/models.json).
+  | { type: "login"; method?: "subscription" | "api-key" | "local" }
   | { type: "logout"; provider?: string }
   | { type: "requestAuthState" }
   | { type: "requestAbout" }

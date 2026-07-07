@@ -23,6 +23,16 @@ const widgetEntries = new Map<string, string[]>();
 const openedUrls = new Set<string>();
 let activeDialog: DialogState | undefined;
 
+// Ghost-dialog guard. Closing the auth modal cancels the OPEN pi dialog, but pi may have
+// already sent the flow's NEXT dialog before that cancel lands — it would then pop up on
+// the bare chat as an orphaned overlay ("서로 꼬이는" state). While this window is armed,
+// the next arriving dialog is auto-answered `cancelled` instead of rendered.
+let suppressDialogsUntil = 0;
+
+export function suppressPendingDialogs(windowMs = 4000): void {
+  suppressDialogsUntil = Date.now() + windowMs;
+}
+
 /** A pluggable surface that can host the pi UI dialogs instead of the default modal root —
  *  the onboarding gate registers one so the auth-bridge's select/input/notify steps render
  *  INSIDE the gate (styled as onboarding steps). Dialog logic is unchanged; only where the
@@ -100,36 +110,47 @@ function selectOptions(request: UiRequest): SelectOption[] {
   return raw.map((option) => ({ label: optionLabel(option), value: typeof option === "string" ? option : optionLabel(option) }));
 }
 
-function dialogHtml(dialog: DialogState): string {
+// Options past this count get a filter field (the API-key provider list is 20+ long).
+const SELECT_FILTER_THRESHOLD = 8;
+
+// The dialog BODY, shared between the two shells below: title/message, then the
+// method-specific controls. `hosted` bodies render inline inside the auth surface —
+// no second overlay/panel/close-chrome, which is what used to stack "a modal inside
+// a modal" with two competing headers.
+function dialogBodyHtml(dialog: DialogState, hosted: boolean): string {
   const { request, method } = dialog;
   const title = requestTitle(request, method === "confirm" ? "Confirm" : method === "select" ? "Select" : "Input");
   const message = text(request.message);
+  const head = hosted
+    ? '<div class="ext-step-title">' + escapeHtml(title) + "</div>"
+    : '<div class="extension-ui-head"><div class="extension-ui-title">' + escapeHtml(title) + "</div>" +
+      '<button class="extension-ui-close" data-ext-ui="cancel" aria-label="Cancel">✕</button></div>';
+  const note = message && message !== title ? '<div class="extension-ui-message">' + escapeHtml(message) + "</div>" : "";
 
   if (method === "select") {
     const options = selectOptions(request);
+    const filter = options.length > SELECT_FILTER_THRESHOLD
+      ? '<input class="extension-ui-filter" data-ext-ui-filter type="text" placeholder="Filter…" autocomplete="off" />'
+      : "";
     return (
-      '<div class="extension-ui-overlay" role="presentation">' +
-      '<section class="extension-ui-panel" role="dialog" aria-modal="true">' +
-      '<div class="extension-ui-head"><div class="extension-ui-title">' + escapeHtml(title) + "</div>" +
-      '<button class="extension-ui-close" data-ext-ui="cancel" aria-label="Cancel">x</button></div>' +
-      (message ? '<div class="extension-ui-message">' + escapeHtml(message) + "</div>" : "") +
+      head + note + filter +
       '<div class="extension-ui-options">' +
-      options.map((option, index) => '<button class="extension-ui-option" data-ext-ui="select-option" data-index="' + index + '">' + escapeHtml(option.label) + "</button>").join("") +
-      "</div></section></div>"
+      options
+        .map((option, index) =>
+          '<button class="extension-ui-option" data-ext-ui="select-option" data-index="' + index +
+          '" data-label="' + escapeHtml(option.label.toLowerCase()) + '">' + escapeHtml(option.label) + "</button>")
+        .join("") +
+      "</div>"
     );
   }
 
   if (method === "confirm") {
     return (
-      '<div class="extension-ui-overlay" role="presentation">' +
-      '<section class="extension-ui-panel" role="dialog" aria-modal="true">' +
-      '<div class="extension-ui-head"><div class="extension-ui-title">' + escapeHtml(title) + "</div>" +
-      '<button class="extension-ui-close" data-ext-ui="cancel" aria-label="Cancel">x</button></div>' +
-      (message ? '<div class="extension-ui-message">' + escapeHtml(message) + "</div>" : "") +
+      head + note +
       '<div class="extension-ui-actions">' +
       '<button class="extension-ui-secondary" data-ext-ui="confirm-no">No</button>' +
       '<button class="extension-ui-primary" data-ext-ui="confirm-yes">Yes</button>' +
-      "</div></section></div>"
+      "</div>"
     );
   }
 
@@ -140,17 +161,23 @@ function dialogHtml(dialog: DialogState): string {
     ? '<textarea class="extension-ui-field extension-ui-textarea" data-ext-ui-field="value" placeholder="' + escapeHtml(placeholder) + '">' + escapeHtml(initial) + "</textarea>"
     : '<input class="extension-ui-field" data-ext-ui-field="value" type="' + (isSecretRequest(request) ? "password" : "text") + '" value="' + escapeHtml(initial) + '" placeholder="' + escapeHtml(placeholder) + '" />';
   return (
-    '<div class="extension-ui-overlay" role="presentation">' +
-    '<section class="extension-ui-panel" role="dialog" aria-modal="true">' +
-    '<div class="extension-ui-head"><div class="extension-ui-title">' + escapeHtml(title) + "</div>" +
-    '<button class="extension-ui-close" data-ext-ui="cancel" aria-label="Cancel">x</button></div>' +
-    (message ? '<div class="extension-ui-message">' + escapeHtml(message) + "</div>" : "") +
+    head + note +
     '<form class="extension-ui-form" data-ext-ui-form="input">' +
     input +
     '<div class="extension-ui-actions">' +
-    '<button type="button" class="extension-ui-secondary" data-ext-ui="cancel">Cancel</button>' +
-    '<button type="submit" class="extension-ui-primary">Submit</button>' +
-    "</div></form></section></div>"
+    (hosted ? "" : '<button type="button" class="extension-ui-secondary" data-ext-ui="cancel">Cancel</button>') +
+    '<button type="submit" class="extension-ui-primary">Continue</button>' +
+    "</div></form>"
+  );
+}
+
+function dialogHtml(dialog: DialogState, hosted: boolean): string {
+  if (hosted) return '<div class="ext-step">' + dialogBodyHtml(dialog, true) + "</div>";
+  return (
+    '<div class="extension-ui-overlay" role="presentation">' +
+    '<section class="extension-ui-panel" role="dialog" aria-modal="true">' +
+    dialogBodyHtml(dialog, false) +
+    "</section></div>"
   );
 }
 
@@ -189,7 +216,19 @@ function attachDialogHandlers(root: HTMLElement): void {
         if (option) sendResponse(request, { value: option.value });
       });
     });
-    root.querySelector<HTMLElement>('[data-ext-ui="select-option"]')?.focus();
+    // Long lists carry a filter field: typing hides non-matching option rows in place.
+    const filter = root.querySelector<HTMLInputElement>("[data-ext-ui-filter]");
+    if (filter) {
+      filter.addEventListener("input", () => {
+        const q = filter.value.trim().toLowerCase();
+        root.querySelectorAll<HTMLElement>('[data-ext-ui="select-option"]').forEach((el) => {
+          el.hidden = !!q && !(el.dataset.label || "").includes(q);
+        });
+      });
+      filter.focus();
+    } else {
+      root.querySelector<HTMLElement>('[data-ext-ui="select-option"]')?.focus();
+    }
     return;
   }
 
@@ -222,7 +261,7 @@ function renderExtensionUi(): void {
   const hosted = hostedEl();
   const root = hosted ?? extensionUiRootEl;
   if (hosted) extensionUiRootEl.innerHTML = ""; // never two copies of the same dialog
-  root.innerHTML = statusHtml() + (activeDialog ? dialogHtml(activeDialog) : "");
+  root.innerHTML = statusHtml() + (activeDialog ? dialogHtml(activeDialog, !!hosted) : "");
   attachChromeHandlers(root);
   attachDialogHandlers(root);
 }
@@ -230,6 +269,7 @@ function renderExtensionUi(): void {
 export function handleExtensionUiRequest(request: UiRequest): void {
   const method = text(request.method);
   if (method === "notify") {
+    suppressDialogsUntil = 0; // the flow reported its outcome — new dialogs are legit again
     const message = text(request.message) || "Notification";
     openUrlOnce(firstUrl(message));
     // While the onboarding gate hosts the flow, its inline notice replaces the system
@@ -281,6 +321,15 @@ export function handleExtensionUiRequest(request: UiRequest): void {
     return;
   }
   if (method === "select" || method === "input" || method === "editor" || method === "confirm") {
+    // Ghost-dialog guard: the user just dismissed the auth surface — a dialog that was
+    // already in flight when the cancel landed gets auto-cancelled instead of rendered.
+    if (Date.now() < suppressDialogsUntil) {
+      sendResponse(request, { cancelled: true });
+      return;
+    }
+    // pi blocks on one dialog at a time, but a stale one could survive a reconnect —
+    // never let it linger unanswered underneath a new one.
+    if (activeDialog) sendResponse(activeDialog.request, { cancelled: true });
     activeDialog = { request, method };
     renderExtensionUi();
     return;

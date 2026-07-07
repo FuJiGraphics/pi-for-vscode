@@ -12,6 +12,10 @@ import type { WebviewPresenter } from "./webviewPresenter";
 import type { RpcEventRouter, RpcEventSink } from "./rpcEventRouter";
 import type { BundledExtensionResolver } from "./bundledExtensionResolver";
 
+// Open tabs beyond this are pruned oldest-idle-first (their on-disk sessions stay in
+// History) — an unbounded tab strip both clutters the UI and accumulates broker stubs.
+const MAX_OPEN_SESSIONS = 8;
+
 // Owns the runtime map + the active-runtime pointer and the entire per-session lifecycle:
 // spawn / connect / revive / switch-away / disconnect / reap, plus the pi state reads and
 // the tagged posts that flow from runtime activity. Everything that mutates a SessionRuntime
@@ -24,6 +28,10 @@ export class SessionRuntimeManager {
   // broker+pi cold-start. Promoted to active by commitNewActiveSession; replaced afterwards.
   private prewarmId?: string;
   private prewarmInFlight?: Promise<SessionRuntime | undefined>;
+  // A new-session commit in flight (its new_session RPC round-trip). ensureActiveRuntime
+  // awaits it instead of falling through to the still-current OLD active runtime, so a
+  // prompt fired the instant after "New Session" lands in the fresh session, not the last.
+  private commitInFlight?: Promise<SessionRuntime | undefined>;
   // Called when a runtime becomes idle or is activated, so the auth-revocation service can
   // drain a pending registry refresh on the visible session. Set once by the composition root.
   private settledHook?: (rt: SessionRuntime) => void;
@@ -94,6 +102,7 @@ export class SessionRuntimeManager {
       rt.pendingUiRequest = undefined;
     }
     await this.postSessionList();
+    void this.enforceOpenSessionLimit();
     // Now the visible session — correct a model selection invalidated by an auth change that
     // happened while this tab was in the background.
     this.settledHook?.(rt);
@@ -164,6 +173,9 @@ export class SessionRuntimeManager {
   // lazy-commit point: only a prompt (the user's first message) calls it, so a new session
   // crystallizes on send rather than on launch. Reuses a usable existing active runtime.
   async ensureActiveRuntime(): Promise<SessionRuntime | undefined> {
+    // A commit kicked off by "New Session" may still be mid-RPC; join it so the prompt
+    // lands in the session being born, not the previous active one.
+    if (this.commitInFlight) return this.commitInFlight;
     const cwd = getAgentCwd();
     const existing = await this.resolveExistingActive(cwd);
     if (existing) return existing;
@@ -213,6 +225,14 @@ export class SessionRuntimeManager {
   // instantly instead of paying the broker+pi cold-start. Posts `activate` BEFORE the seed so a
   // provisional webview view (an optimistic first message) is re-keyed, not clobbered.
   async commitNewActiveSession(cwd: string): Promise<SessionRuntime | undefined> {
+    // Single-flight: a concurrent New-Session click + first-prompt must share ONE commit,
+    // never spawn two sessions. ensureActiveRuntime also joins this promise.
+    if (this.commitInFlight) return this.commitInFlight;
+    this.commitInFlight = this.doCommitNewActiveSession(cwd).finally(() => { this.commitInFlight = undefined; });
+    return this.commitInFlight;
+  }
+
+  private async doCommitNewActiveSession(cwd: string): Promise<SessionRuntime | undefined> {
     const previous = this.active;
     const rt = this.takePrewarm(cwd) ?? await this.createRuntime(cwd);
     if (!rt?.client) return undefined;
@@ -234,7 +254,29 @@ export class SessionRuntimeManager {
     await this.seedRuntime(rt, false, true); // preserveRunning: don't blink an optimistic spinner
     await this.postSessionList();
     void this.ensurePrewarm(cwd); // re-arm the spare for the next new session
+    void this.enforceOpenSessionLimit();
     return rt;
+  }
+
+  // Cap the open-tab set: past MAX_OPEN_SESSIONS, close the OLDEST idle background
+  // sessions (never the active one, never one mid-turn or awaiting input, never the
+  // spare). Map iteration order is creation order, so the front is the oldest. The
+  // closed tabs' session files stay on disk and reopen from History.
+  private async enforceOpenSessionLimit(): Promise<void> {
+    // Count only COMMITTED, live tabs. Exclude the warm spare AND any runtime still
+    // spawning (client not yet started) — the prewarm is in `runtimes` before `prewarmId`
+    // is assigned, so a bare `id !== prewarmId` filter would both miscount it as a tab and
+    // (idle + not active) reap the half-born spare, leaking its broker/pi.
+    const open = [...this.runtimes.values()].filter((rt) => rt.id !== this.prewarmId && rt.client?.isStarted);
+    let excess = open.length - MAX_OPEN_SESSIONS;
+    if (excess <= 0) return;
+    for (const rt of open) {
+      if (excess <= 0) break;
+      if (rt.id === this.activeRuntimeId || rt.isRunning || rt.pendingUiRequest) continue;
+      await this.reapRuntime(rt);
+      excess--;
+    }
+    await this.postSessionList();
   }
 
   // Restore the session the user was last viewing after a webview reload. Reuses a live runtime
@@ -270,6 +312,7 @@ export class SessionRuntimeManager {
     await this.seedRuntime(rt, true);
     this.presenter.post({ type: "activate", sessionId: rt.id });
     void this.ensurePrewarm(cwd); // warm a spare for the next new session
+    void this.enforceOpenSessionLimit();
   }
 
   // Keep exactly one booted-but-uncommitted spare ready (when enabled and a workspace is open).
@@ -311,6 +354,16 @@ export class SessionRuntimeManager {
       void this.reapRuntime(rt);
       return undefined;
     }
+    return rt;
+  }
+
+  // Acquire a runtime to load a session into (History open / switch): reuse the warm spare
+  // when it's ready — an already-booted pi means switch_session lands instantly instead of
+  // paying the broker+pi cold-start every time — and re-arm a fresh spare behind it. Falls
+  // back to a cold spawn only when no spare is warm.
+  async acquireRuntimeForSwitch(cwd: string): Promise<SessionRuntime | undefined> {
+    const rt = this.takePrewarm(cwd) ?? await this.createRuntime(cwd);
+    if (rt) void this.ensurePrewarm(cwd);
     return rt;
   }
 

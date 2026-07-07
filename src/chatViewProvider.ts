@@ -10,6 +10,7 @@ import { ModelService } from "./modelService";
 import { AuthRevocationService } from "./authRevocationService";
 import { SessionRuntimeManager } from "./sessionRuntimeManager";
 import { SessionCrudService } from "./sessionCrudService";
+import { ConversationActionsService } from "./conversationActions";
 import type { ImageAttachment, PiRpcMessage, WebviewToExtensionMessage } from "./protocol";
 import { getChatHtml } from "./webviewHtml";
 import { EditorContextTracker } from "./editorContextTracker";
@@ -34,6 +35,7 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
   private readonly revocation: AuthRevocationService;
   private readonly commandPalette: CommandPaletteService;
   private readonly crud: SessionCrudService;
+  private readonly actions: ConversationActionsService;
   private contextTracker?: EditorContextTracker;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -62,6 +64,10 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
       ensureRuntime: () => this.manager.ensureRuntimeForRpc(),
     });
     this.crud = new SessionCrudService(this.manager, this.presenter, () => this.open());
+    this.actions = new ConversationActionsService(this.manager, this.presenter, {
+      prompt: (text, images) => this.prompt(text, images),
+      openExported: (path) => void vscode.env.openExternal(vscode.Uri.file(path)),
+    });
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -168,6 +174,15 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
         case "prompt":
           await this.prompt(message.text, message.images);
           return;
+        case "editMessage":
+          await this.actions.editMessage(message.userOrdinal, message.originalText, message.text, message.images);
+          return;
+        case "compactSession":
+          await this.actions.compact();
+          return;
+        case "exportSession":
+          await this.actions.exportHtml();
+          return;
         case "abort":
           await this.stop();
           return;
@@ -217,6 +232,7 @@ export class PiChatViewProvider implements vscode.WebviewViewProvider, vscode.Di
           await this.runAuthCommand(
             message.method === "subscription" ? "/login subscription"
               : message.method === "api-key" ? "/login api-key"
+              : message.method === "local" ? "/add-local-model"
               : "/login",
           );
           return;

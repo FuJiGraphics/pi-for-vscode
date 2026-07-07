@@ -22,6 +22,8 @@ export function openModelPicker(): void {
   modelSearchEl.value = "";
   if (allModels.length > 0) {
     applyFilter();
+    // Long roster: land the viewport on the model in use, not the top of the catalog.
+    modelListEl.querySelector(".model-item.current")?.scrollIntoView({ block: "center" });
   } else {
     modelListEl.innerHTML = '<div class="model-empty">Loading models...</div>';
     post({ type: "requestModels" });
@@ -43,11 +45,20 @@ function formatPrice(perMtok: number): string {
   return "$" + perMtok.toFixed(2).replace(/\.?0+$/, "");
 }
 
-/** Compact price chip, "$3/$15 Mtok" (input/output per million tokens). Free or
- *  unreported pricing → "" (the chip is omitted, never shown as $0). */
+/** Compact price label, "$3/15" (input/output per Mtok — the unit lives in the tooltip,
+ *  the row keeps only the numbers). Free or unreported pricing → "" (never shown as $0). */
 export function priceLabel(cost: ModelCost | undefined): string {
   if (!cost || (cost.input <= 0 && cost.output <= 0)) return "";
-  return formatPrice(cost.input) + "/" + formatPrice(cost.output) + " Mtok";
+  return formatPrice(cost.input) + "/" + formatPrice(cost.output).slice(1);
+}
+
+/** The row's right-aligned data column: "$3/15 · 200k" (price · context window). */
+export function metaLabel(model: ModelListItem): string {
+  const parts: string[] = [];
+  const price = priceLabel(model.cost);
+  if (price) parts.push(price);
+  if (model.contextWindow) parts.push(formatTokens(model.contextWindow));
+  return parts.join(" · ");
 }
 
 /** Multi-line title tooltip: full pricing (cache rates included) + context/output limits. */
@@ -67,9 +78,13 @@ export function itemTooltip(model: ModelListItem): string {
   return lines.join("\n");
 }
 
+// One dense row per model: name (accent when current) · thinking glyph · right-aligned
+// mono data "$3/15 · 200k". The full detail (cache rates, max output, unit) stays in the
+// title tooltip; capability chips are gone — vision is near-universal (noise), thinking
+// earns a 4px glyph. Provider identity comes from the group header, not per-row text.
 export function itemHtml(model: ModelListItem): string {
-  const price = priceLabel(model.cost);
   const tooltip = itemTooltip(model);
+  const meta = metaLabel(model);
   return (
     '<button class="model-item' +
     (model.isCurrent ? " current" : "") +
@@ -79,25 +94,35 @@ export function itemHtml(model: ModelListItem): string {
     escapeHtml(model.modelId) +
     '"' +
     (tooltip ? ' title="' + escapeHtml(tooltip) + '"' : "") +
-    '><div class="model-main"><div class="model-title">' +
+    '><span class="model-name">' +
     escapeHtml(model.model) +
-    (model.isCurrent ? '<span class="current-tag"> Current</span>' : "") +
-    '</div><div class="model-meta">' +
-    escapeHtml(model.provider) +
-    (model.thinking ? '<span class="model-cap">thinking</span>' : "") +
-    (model.vision ? '<span class="model-cap">vision</span>' : "") +
-    (price ? '<span class="model-price">' + escapeHtml(price) + "</span>" : "") +
-    (model.contextWindow ? '<span class="model-ctx">' + escapeHtml(formatTokens(model.contextWindow)) + " ctx</span>" : "") +
-    "</div></div></button>"
+    "</span>" +
+    (model.thinking ? '<span class="model-think" title="Supports extended thinking"></span>' : "") +
+    (meta ? '<span class="model-data">' + escapeHtml(meta) + "</span>" : "") +
+    "</button>"
   );
 }
 
-// Register-a-provider row (reuses the muted .model-add styling). Opens the compact auth modal.
+/** Provider group header rows + item rows, preserving pi's catalog order. */
+export function groupedListHtml(models: ModelListItem[]): string {
+  let html = "";
+  let lastProvider: string | undefined;
+  for (const model of models) {
+    if (model.provider !== lastProvider) {
+      lastProvider = model.provider;
+      html += '<div class="model-group-head">' + escapeHtml(model.provider) + "</div>";
+    }
+    html += itemHtml(model);
+  }
+  return html;
+}
+
+// Register-a-provider row (muted, below the roster). Opens the compact auth modal.
 function addProviderHtml(): string {
   return (
-    '<button class="model-item model-add secondary" data-add-provider>' +
-    '<div class="model-main"><div class="model-title">+ Add provider</div>' +
-    '<div class="model-meta">Sign in with OAuth or an API key</div></div></button>'
+    '<button class="model-item model-add" data-add-provider>' +
+    '<span class="model-name">+ Add provider</span>' +
+    '<span class="model-data">OAuth · API key · local</span></button>'
   );
 }
 
@@ -111,7 +136,7 @@ function applyFilter(): void {
     modelListEl.innerHTML = query ? '<div class="model-empty">No models match your search.</div>' : addProviderHtml();
     return;
   }
-  modelListEl.innerHTML = filtered.map(itemHtml).join("") + addProviderHtml();
+  modelListEl.innerHTML = groupedListHtml(filtered) + addProviderHtml();
 }
 
 export function renderModelList(models: ModelListItem[]): void {

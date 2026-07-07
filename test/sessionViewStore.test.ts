@@ -17,6 +17,28 @@ test("activateSession swaps the active view, caches the old one, reports change"
   assert.equal(store.activeView.sessionName, "alpha");
 });
 
+test("beginProvisionalSession swaps in a fresh composer view instantly; promoteProvisional re-keys it", () => {
+  setPersisted(undefined);
+  const store = new SessionViewStore();
+  store.activateSession("a");
+  store.activeView.sessionName = "alpha";
+  store.activeView.messages.push({ id: "m", role: "user", text: "hi", createdAt: 0 } as any);
+
+  assert.equal(store.beginProvisionalSession(), true);
+  assert.equal(store.getActiveSessionId(), "");
+  assert.equal(store.activeView.messages.length, 0); // fresh composer
+  assert.equal(store.openViews().some(({ id }) => id === "a"), true); // old tab survives
+
+  // Already on the fresh provisional → no-op (prevents session spam on repeated +).
+  assert.equal(store.beginProvisionalSession(), false);
+
+  // The host's activate re-keys the provisional view to the real runtime id.
+  store.activeView.messages.push({ id: "m2", role: "user", text: "first", createdAt: 0 } as any);
+  assert.equal(store.promoteProvisional("b"), true);
+  assert.equal(store.getActiveSessionId(), "b");
+  assert.equal(store.activeView.messages.length, 1); // optimistic content survived the commit
+});
+
 test("withSession mutates a background view, suppresses render, and restores by id", () => {
   setPersisted(undefined);
   const store = new SessionViewStore();

@@ -50,6 +50,15 @@ export function consumePendingImageAttachments(): UiImageAttachment[] {
   return consumed;
 }
 
+// Re-stage a message's attachments into the composer tray — used by edit-rewind so an
+// edited image message keeps its images on resend (a plain text edit would otherwise
+// fork away the original and drop the picture pi was asked about). Replaces the tray.
+export function restageImageAttachments(attachments: UiImageAttachment[] | undefined): void {
+  pendingAttachments = (attachments ?? []).map((attachment) => ({ ...attachment }));
+  renderAttachmentTray();
+  notifyChange();
+}
+
 export function imageDataUrl(image: ImageAttachment): string {
   return `data:${image.mimeType};base64,${image.data}`;
 }

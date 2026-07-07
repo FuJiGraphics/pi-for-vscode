@@ -5,11 +5,16 @@
 // merged in so "/" is a single entry point. Mirrors the modelPicker popover.
 import { appEl, commandListEl, commandPanelEl, composerEl } from "./dom";
 import { post } from "./bridge";
-import { escapeHtml } from "./util";
+import { escapeHtml, formatTokens } from "./util";
 import { clearComposer, setComposerToCommand } from "./input";
-import { closeModelPicker, toggleModelPicker } from "./modelPicker";
-import { closeHistory, toggleHistory } from "./history";
-import { setRunning } from "./conversation";
+import { toggleModelPicker } from "./modelPicker";
+import { toggleHistory } from "./history";
+import { toggleSettings } from "./settingsPanel";
+import { addMessage, setRunning } from "./conversation";
+import { startNewSession } from "./newSession";
+import { state } from "./state";
+import { contextLabel, statsSummary } from "./sessionStatsBar";
+import { usageBarRows } from "./usageData";
 import type { CommandListItem } from "../protocol";
 
 type CommandSource = "builtin" | "extension" | "prompt" | "skill";
@@ -23,15 +28,50 @@ interface CommandRow {
   run?: () => void; // client built-ins only
 }
 
+// "/context" — the model context window + session usage, inline (Claude Code idiom).
+function showContextInfo(): void {
+  const stats = state.stats;
+  if (!stats) {
+    addMessage("system", "No context data yet - send a message first.");
+    return;
+  }
+  const ctx = stats.context;
+  const gauge = contextLabel(ctx);
+  const lines: string[] = [];
+  if (ctx && gauge) {
+    const used = ctx.tokens !== null ? formatTokens(ctx.tokens) + " of " + formatTokens(ctx.contextWindow) + " tokens" : formatTokens(ctx.contextWindow) + " token window";
+    lines.push("Context: " + gauge.label + " - " + used);
+  }
+  lines.push("Session: " + statsSummary(stats));
+  addMessage("system", lines.join("\n\n")); // paragraph joins — a single \n collapses in markdown
+}
+
+// "/usage" — subscription rate-limit windows, when the signed-in provider reports them.
+function showUsageInfo(): void {
+  const rows = usageBarRows();
+  if (rows.length === 0) {
+    addMessage("system", "No usage-window data. Usage windows are reported for subscription (OAuth) sign-ins only.");
+    return;
+  }
+  addMessage(
+    "system",
+    rows
+      .map((row) => "- " + row.label + ": " + Math.round(row.usedPercent) + "% used" + (row.reset ? " - resets " + row.reset : ""))
+      .join("\n"), // list items keep their own lines in markdown
+  );
+}
+
 // Built-in client actions — mapped to existing webview actions / RPC so the
 // palette is a single entry point alongside Pi's own commands.
 const BUILTINS: CommandRow[] = [
-  {
-    name: "new", description: "Start a new session", source: "builtin", origin: "client",
-    run: () => { closeHistory(); closeModelPicker(); post({ type: "newSession" }); },
-  },
+  { name: "new", description: "Start a new session", source: "builtin", origin: "client", run: startNewSession },
   { name: "model", description: "Switch model", source: "builtin", origin: "client", run: () => toggleModelPicker() },
   { name: "history", description: "Browse session history", source: "builtin", origin: "client", run: () => toggleHistory() },
+  { name: "context", description: "Show context window usage", source: "builtin", origin: "client", run: showContextInfo },
+  { name: "usage", description: "Show subscription usage limits", source: "builtin", origin: "client", run: showUsageInfo },
+  { name: "compact", description: "Summarize the conversation to free up context", source: "builtin", origin: "client", run: () => post({ type: "compactSession" }) },
+  { name: "export", description: "Export this session as HTML", source: "builtin", origin: "client", run: () => post({ type: "exportSession" }) },
+  { name: "settings", description: "Open settings", source: "builtin", origin: "client", run: () => toggleSettings() },
   {
     name: "stop", description: "Stop Pi", source: "builtin", origin: "client",
     run: () => { setRunning(false); post({ type: "abort" }); },

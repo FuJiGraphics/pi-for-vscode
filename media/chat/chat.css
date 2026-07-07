@@ -241,10 +241,16 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   padding: 34px var(--chat-scrollbar-outset) 18px 0;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  /* Spacing via margins (not flex gap) so message-pair rules below can tighten it. */
+  gap: 0;
   /* No paint containment: running/timeline dots intentionally glow outside their row boxes. */
   contain: layout;
 }
+.message + .message { margin-top: 26px; }
+/* Rapid-fire user sends (a queue building up) read as ONE burst, not scattered turns. The
+   meta row never takes flow space (it's a hover pill over the bubble's top-right — see
+   below), so a burst really is 6px apart, not 6px + a meta row, and nothing overlaps. */
+.message.user + .message.user { margin-top: 6px; }
 #messages::-webkit-scrollbar { width: 14px; }
 #messages::-webkit-scrollbar-track { background: transparent; }
 #messages::-webkit-scrollbar-thumb {
@@ -293,6 +299,23 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   line-height: 1.25;
   margin-bottom: 10px;
 }
+.empty-hints {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  color: var(--subtle);
+  font-size: var(--fs-micro);
+}
+.empty-hints kbd {
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: inherit;
+}
 .message {
   max-width: 100%;
   /* Paint containment clips the pulsing status/timeline halos near the left edge. */
@@ -300,6 +323,7 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   overflow: visible;
 }
 .message.user {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -311,8 +335,8 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 }
 .message.user .bubble {
   max-width: min(78%, 560px);
-  padding: 10px 16px;
-  border-radius: 23px;
+  padding: 9px 13px;
+  border-radius: 12px;
   background: var(--bubble);
   color: var(--fg);
   font-size: var(--fs-body);
@@ -426,18 +450,31 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   font-size: var(--fs-icon);
 }
 .image-preview-close:hover { background: var(--surface-hover); }
+/* User-message meta = timestamp + copy/edit, as a hover PILL floating over the bubble's
+   top-right corner. Out of flow (position:absolute) so it never adds row height or pushes
+   the next bubble — this is what lets a rapid burst stack tightly with NO overlapping meta
+   rows. Sits just above the bubble; the messages list's top padding gives the first one room. */
 .meta {
-  min-height: 18px;
+  position: absolute;
+  top: -13px;
+  right: 2px;
+  z-index: 3;
   color: var(--subtle);
   font-size: var(--fs-meta);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-right: 4px;
+  gap: 4px;
+  padding: 1px 4px 1px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: var(--surface);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--shadow) 60%, transparent);
   opacity: 0;
+  pointer-events: none;
   transition: opacity 120ms ease;
 }
-.message.user:hover .meta { opacity: 1; }
+.message.user:hover .meta,
+.message.user:focus-within .meta { opacity: 1; pointer-events: auto; }
 .meta button, .assistant-actions button {
   color: inherit;
   width: 22px;
@@ -501,7 +538,6 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   animation: px-rain 0.45s ease both;
   animation-delay: calc(var(--col) * 32ms);
 }
-.think-time { color: var(--subtle); font-size: var(--fs-meta); }
 .status-steps { color: var(--subtle); font-weight: 400; margin-left: 6px; }
 /* The "current work" chip in the spinner header: Read · cards.ts / Thinking… <last line>. */
 .status-task {
@@ -513,18 +549,6 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Live turn-total counter in the running header — rolls up like a slot counter as each
-   model call's usage lands (paintUsageRoll eases it toward the exact total per frame). */
-.usage-roll {
-  flex: none;
-  margin-left: 8px;
-  color: var(--accent);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.usage-roll:empty { display: none; }
-.usage-roll.rolling { text-shadow: 0 0 9px color-mix(in srgb, var(--accent) 45%, transparent); }
 .stream-cursor {
   display: inline-block;
   width: 7px;
@@ -647,9 +671,41 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .onboarding-back:hover { color: var(--fg); background: var(--surface-hover); }
 /* pi dialogs hosted inside the gate render as inline onboarding steps, not modals. */
 .onboarding-step-root { width: min(360px, 100%); }
-.onboarding-step-root .extension-ui-overlay { position: static; inset: auto; background: none; display: block; padding: 0; }
-.onboarding-step-root .extension-ui-panel { box-shadow: none; border: 1px solid var(--border); width: 100%; max-width: none; }
 .onboarding-step-root .extension-ui-stack { position: static; margin-bottom: 10px; }
+/* A pi dialog hosted INSIDE the auth surface: inline content, no second overlay/panel —
+   the surface (gate or modal) is the one and only frame. */
+.ext-step {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+}
+.ext-step-title {
+  color: var(--fg);
+  font-size: var(--fs-body);
+  font-weight: 650;
+  line-height: 1.35;
+}
+.ext-step-wait {
+  color: var(--subtle);
+  font-size: var(--fs-meta);
+  padding: 2px 0 4px;
+}
+.ext-step .extension-ui-options { max-height: min(42vh, 300px); }
+/* Filter field above long select lists (the 20+ provider roster). */
+.extension-ui-filter {
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: var(--fs-meta);
+}
+.extension-ui-filter:focus { border-color: color-mix(in srgb, var(--focus) 55%, var(--border)); }
 /* Compact auth modal (≥1 provider already exists): registration cards or the model-invalidated
    prompt, shown OVER the chat. 0 providers uses the full-screen .onboarding-root instead.
    Above the pi dialog modals (z 80) so a bridge dialog hosted inside stays on top; below the
@@ -809,7 +865,6 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .diff-stat { flex: none; display: inline-flex; gap: 6px; font-variant-numeric: tabular-nums; font-weight: 650; }
 .diff-stat .ds-add { color: var(--diff-add); }
 .diff-stat .ds-del { color: var(--diff-del); }
-.diff-stat .ds-rolling { text-shadow: 0 0 8px color-mix(in srgb, currentColor 45%, transparent); }
 .tl-error .tl-label { color: var(--error); }
 /* Expandable tool card: the row toggles an OUT block (bash stdout / read content / web result). */
 .tl-expandable .tl-row { cursor: pointer; }
@@ -1487,55 +1542,74 @@ a:hover { text-decoration: underline; }
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 3px;
 }
 .model-list::-webkit-scrollbar { width: 8px; }
 .model-list::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg) 18%, transparent); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
 .model-empty { color: var(--muted); text-align: center; font-size: var(--fs-meta); padding: 18px 0; }
+/* Provider group header: micro caps, doubles as the row's provider identity so
+   individual rows carry only the model's own facts. */
+.model-group-head {
+  padding: 9px 10px 3px;
+  color: var(--subtle);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.model-group-head:first-child { padding-top: 3px; }
+/* One dense line per model: name · thinking glyph · right-aligned data column. */
 .model-item {
   width: 100%;
   text-align: left;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 9px;
-  border: 1px solid transparent;
+  gap: 7px;
+  padding: 4px 10px;
+  min-height: 26px;
+  border-radius: 7px;
+  border: 0;
+  border-left: 2px solid transparent;
   cursor: pointer;
   background: transparent;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  transition: background-color 100ms ease;
 }
 .model-item:hover { background: var(--surface-hover); }
-.model-item.current { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
-.model-item.model-add { margin-top: 4px; }
-.model-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
-.model-title {
+.model-item.current {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.model-item.current .model-name { color: var(--accent); font-weight: 700; }
+.model-name {
+  min-width: 0;
+  flex: 0 1 auto;
   color: var(--fg);
   font-size: var(--fs-body);
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.model-item.model-add .model-title { color: var(--accent); }
-.model-meta { color: var(--muted); font-size: var(--fs-meta); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.model-cap {
-  padding: var(--chip-pad);
-  border-radius: var(--chip-radius);
-  font-size: var(--fs-micro);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: color-mix(in srgb, var(--accent) 80%, var(--fg));
+/* Extended-thinking marker: one quiet 4px accent square (the pi block vocabulary). */
+.model-think {
+  flex: none;
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--accent) 85%, transparent);
 }
-/* Pricing / context chips: neutral so the capability chips stay the accent pop. */
-.model-price, .model-ctx {
-  padding: var(--chip-pad);
-  border-radius: var(--chip-radius);
+/* The data column: "$3/15 · 200k" in mono numerals, pushed to the right edge. */
+.model-data {
+  flex: none;
+  margin-left: auto;
+  color: var(--subtle);
+  font-family: var(--mono);
   font-size: var(--fs-micro);
-  background: color-mix(in srgb, var(--fg) 8%, transparent);
-  color: var(--muted);
-  white-space: nowrap;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
+.model-item.model-add { margin-top: 6px; }
+.model-item.model-add .model-name { color: var(--muted); font-weight: 500; }
+.model-item.model-add:hover .model-name { color: var(--fg); }
 
 /* Slash-command palette — floating above the composer, full composer width */
 .command-panel {
@@ -1630,6 +1704,49 @@ a:hover { text-decoration: underline; }
 .composer-wrap {
   padding: 8px 0 10px;
   background: linear-gradient(to top, var(--bg) 86%, color-mix(in srgb, var(--bg) 0%, transparent));
+}
+/* ---- pi status strip ----
+   The signature line: pinned above the composer for the whole run (Claude-Code idiom),
+   pi.dev's block mark ticks beside a small pixel-font gerund, with the live facts —
+   elapsed time, current step, turn tokens — reading quietly alongside. */
+.status-strip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 6px 7px;
+  min-height: 20px;
+  font-size: var(--fs-meta);
+  color: var(--muted);
+}
+.status-strip .pi-mark.spinner { --cell: 3px; --gap: 1px; }
+.status-strip .pixel-word { flex: none; }
+.strip-time {
+  flex: none;
+  color: var(--subtle);
+  font-variant-numeric: tabular-nums;
+  min-width: 24px;
+}
+.strip-task {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--subtle);
+}
+.strip-usage {
+  flex: none;
+  margin-left: auto;
+  color: color-mix(in srgb, var(--accent) 78%, var(--muted));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.strip-usage:empty { display: none; }
+.strip-hint {
+  flex: none;
+  color: color-mix(in srgb, var(--muted) 52%, transparent);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
 }
 /* Compact usage control in the composer action row. The visible surface is an icon;
    hover/focus reveals 5h/1w bars filled by percent used (0% empty → 100% full). */
@@ -1822,42 +1939,48 @@ a:hover { text-decoration: underline; }
   font-size: var(--fs-micro, var(--fs-meta));
   font-weight: 600;
 }
+/* Claude-Code-style composer: a full-width rounded RECTANGLE (not a pill), one quiet
+   border, no rotating beam or heavy glow — the working state is just a border tint. */
 .composer {
   position: relative;
   border: 1px solid var(--border);
-  border-radius: 27px;
-  padding: 11px 14px 8px;
+  border-radius: 10px;
+  padding: 10px 12px 8px;
   background: var(--composer);
-  box-shadow: 0 12px 34px var(--shadow);
-  overflow: visible; /* action-row usage/context popovers must escape the rounded composer */
-  transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--shadow) 55%, transparent);
+  overflow: visible; /* action-row usage/context popovers must escape the composer box */
+  transition: border-color 180ms ease, background-color 180ms ease;
 }
 .composer.focused { border-color: color-mix(in srgb, var(--focus) 45%, var(--border)); }
-@property --beam-angle {
-  syntax: '<angle>';
-  inherits: false;
-  initial-value: 130deg;
+.composer.working { border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+/* Edit-rewind banner: visible while a previously sent user message is being edited.
+   Sending forks the conversation at that message; ✕ (or Escape) cancels the edit. */
+.edit-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--heading) 32%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--heading) 9%, transparent);
+  color: var(--muted);
+  font-size: var(--fs-meta);
 }
-.composer::before, .composer::after {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  padding: 1px;
-  pointer-events: none;
-  opacity: 0;
-  background: conic-gradient(from var(--beam-angle, 130deg), transparent 0deg, color-mix(in srgb, var(--accent) 0%, transparent) 16deg, color-mix(in srgb, var(--accent) 88%, transparent) 28deg, color-mix(in srgb, var(--accent) 35%, transparent) 54deg, transparent 92deg, transparent 360deg);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  z-index: 0;
-  transition: opacity 240ms ease;
+.edit-banner b { color: var(--fg); font-weight: 650; }
+.edit-banner-cancel {
+  margin-left: auto;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--muted);
+  line-height: 1;
 }
-.composer::after { filter: blur(2px); padding: 2px; }
-.composer.working { border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); }
-.composer.working::before, .composer.working::after { opacity: 1; animation: beam-spin 4.2s linear infinite; }
-.composer > * { position: relative; z-index: 1; }
+.edit-banner-cancel:hover { background: color-mix(in srgb, var(--fg) 14%, transparent); color: var(--fg); }
 .attachment-tray {
   padding: 0 0 8px;
 }
@@ -1940,14 +2063,14 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
   flex-wrap: nowrap;
   min-width: 0;
   /* The send button is positioned absolutely at the right edge (below), so NO flow
-     control can ever push it off-screen or clip it — not the +, not the approval pill,
-     not the model picker. This padding reserves its lane so the flow items stop short
-     of it; overflow:hidden clips any overflowing flow item instead of the send button. */
+     control can ever push it off-screen or clip it — not the +, not the model picker.
+     This padding reserves its lane so the flow items stop short of it;
+     overflow:hidden clips any overflowing flow item instead of the send button. */
   position: relative;
-  padding-right: 43px;
+  padding-right: 37px;
   overflow: hidden;
 }
-.ghost-button, .pill-button, .model-button {
+.ghost-button, .model-button {
   height: 30px;
   border-radius: 999px;
   display: inline-flex;
@@ -1960,13 +2083,12 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
 }
 .ghost-button {
-  width: 32px;
+  width: 30px;
   border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   background: color-mix(in srgb, var(--surface) 62%, transparent);
   font-size: var(--fs-icon-lg);
   font-weight: 750;
 }
-.pill-button { padding: 0 9px; font-weight: 600; }
 .model-button {
   height: 30px;
   /* The squeeze absorber for the action row: every other control is flex:0 0 auto
@@ -2000,13 +2122,13 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
   transition: color 120ms ease, transform 120ms ease;
 }
 .model-button:hover .model-button-caret { color: var(--accent); transform: translateY(1px) rotate(180deg); }
-.ghost-button:hover, .pill-button:hover, .model-button:hover {
+.ghost-button:hover, .model-button:hover {
   background: var(--surface-hover);
   color: var(--fg);
 }
 .ghost-button:hover { border-color: color-mix(in srgb, var(--accent) 32%, var(--border)); }
 .model-button:hover { border-color: color-mix(in srgb, var(--border) 74%, transparent); }
-.ghost-button:active, .pill-button:active, .model-button:active { transform: scale(.96); }
+.ghost-button:active, .model-button:active { transform: scale(.96); }
 .thinking-control {
   --thinking-current-color: var(--accent);
   --thinking-fill: 0%;
@@ -2072,27 +2194,20 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
 .thinking-option.unsupported:hover { background: none; }
 .thinking-option-name { flex: none; min-width: 56px; color: var(--fg); font-weight: 600; font-size: var(--fs-meta); }
 .thinking-option-desc { color: var(--muted); font-size: var(--fs-micro); }
-.stop-button {
-  height: 30px;
-  padding: 0 11px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--error) 18%, transparent);
-  color: var(--error);
-  font-weight: 650;
-}
 .spacer { flex: 1 1 auto; min-width: 0; }
 .send-button {
   /* Pinned to the action row's right edge, out of flow — vertically centered via
      margin:auto (NOT transform, so send-pop's scale animation stays intact). Nothing
-     in the flow can move or clip it. */
+     in the flow can move or clip it. Sized to the 30px control row (ghost/model/usage)
+     so the send/stop control reads as one of the row's controls, not a jumbo CTA. */
   position: absolute;
   right: 0;
   top: 0;
   bottom: 0;
   margin-block: auto;
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
   aspect-ratio: 1;
   padding: 0;
   border-radius: 999px;
@@ -2101,7 +2216,7 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
   justify-content: center;
   background: var(--accent);
   color: var(--bg);
-  font-size: calc(var(--fs-base) + 7px);
+  font-size: calc(var(--fs-base) + 3px);
   line-height: 1;
   font-weight: 800;
   transition: transform 130ms ease, filter 130ms ease, opacity 130ms ease;
@@ -2141,10 +2256,6 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
   0% { transform: scale(1); }
   55% { transform: scale(1.45); box-shadow: 0 0 0 1.5px var(--tool-accent, var(--accent)), 0 0 0 5px color-mix(in srgb, var(--tool-accent, var(--accent)) 22%, transparent); }
   100% { transform: scale(1); }
-}
-@keyframes beam-spin {
-  from { --beam-angle: 130deg; }
-  to { --beam-angle: 490deg; }
 }
 @keyframes send-pop {
   0% { transform: scale(.94); }
@@ -2381,11 +2492,6 @@ textarea::placeholder { color: color-mix(in srgb, var(--muted) 58%, transparent)
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
-}
-/* Narrow panel: drop the footer's optional text labels first so the model label and
-   send button stay on one line and never get clipped. */
-@media (max-width: 560px) {
-  .pill-button .optional { display: none; }
 }
 /* Tighter still: once the model label is already at its truncation floor, shed the two
    on-demand info chips (rate-limit usage, context %) so the model picker and send button

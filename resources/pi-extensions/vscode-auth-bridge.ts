@@ -1,3 +1,7 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
 type AuthType = "oauth" | "api_key";
 type AnyRecord = Record<string, any>;
 
@@ -235,6 +239,70 @@ async function refreshAuth(_args: string, ctx: AnyRecord): Promise<void> {
   refreshModels(bridge.modelRegistry);
 }
 
+// ---- local model (Ollama / LM Studio / any OpenAI-compatible server) ----
+// pi's own extensibility point for this is ~/.pi/agent/models.json (ModelsConfigSchema:
+// providers → { name, baseUrl, api, apiKey, models[] }). This command collects the two
+// facts that matter (base URL + model id), merges them into models.json, and reloads the
+// registry — no pi behavior is reimplemented, only the file pi already reads is written.
+const LOCAL_PROVIDER_ID = "local";
+
+function modelsJsonPath(): string {
+  return path.join(os.homedir(), ".pi", "agent", "models.json");
+}
+
+function readModelsJson(): AnyRecord {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(modelsJsonPath(), "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function addLocalModel(_args: string, ctx: AnyRecord): Promise<void> {
+  const bridge = getAuthBridge(ctx);
+  const baseUrlRaw = await ctx.ui.input("Server base URL (OpenAI-compatible)", "http://localhost:11434/v1");
+  const baseUrl = typeof baseUrlRaw === "string" ? baseUrlRaw.trim().replace(/\/+$/, "") : "";
+  if (!baseUrl) {
+    ctx.ui.notify("Local model setup cancelled.", "warning");
+    return;
+  }
+  if (!/^https?:\/\//i.test(baseUrl)) {
+    ctx.ui.notify(`That doesn't look like a URL: ${baseUrl}`, "error");
+    return;
+  }
+  const modelIdRaw = await ctx.ui.input("Model id (as the server names it)", "qwen2.5-coder:32b");
+  const modelId = typeof modelIdRaw === "string" ? modelIdRaw.trim() : "";
+  if (!modelId) {
+    ctx.ui.notify("Local model setup cancelled.", "warning");
+    return;
+  }
+
+  const config = readModelsJson();
+  const providers: AnyRecord = (config.providers = asRecord(config.providers) ?? {});
+  const provider: AnyRecord = (providers[LOCAL_PROVIDER_ID] = asRecord(providers[LOCAL_PROVIDER_ID]) ?? {});
+  provider.name = typeof provider.name === "string" && provider.name ? provider.name : "Local";
+  provider.baseUrl = baseUrl;
+  provider.api = typeof provider.api === "string" && provider.api ? provider.api : "openai-completions";
+  // A key is required by the OpenAI wire format but ignored by local servers; a stub also
+  // marks the provider "configured" so its models count as available.
+  if (typeof provider.apiKey !== "string" || !provider.apiKey) provider.apiKey = "local";
+  const models: AnyRecord[] = Array.isArray(provider.models) ? provider.models : (provider.models = []);
+  if (!models.some((model) => asRecord(model)?.id === modelId)) {
+    models.push({ id: modelId, name: modelId });
+  }
+
+  fs.mkdirSync(path.dirname(modelsJsonPath()), { recursive: true });
+  fs.writeFileSync(modelsJsonPath(), JSON.stringify(config, null, 2) + "\n", "utf8");
+
+  if (bridge) {
+    // reload() re-reads models.json on newer pi; refresh() is the older registry hook.
+    if (typeof bridge.modelRegistry.reload === "function") bridge.modelRegistry.reload();
+    else refreshModels(bridge.modelRegistry);
+  }
+  ctx.ui.notify(`Added ${modelId} at ${baseUrl}. Pick it from the model list.`, "info");
+}
+
 async function logout(args: string, ctx: AnyRecord): Promise<void> {
   const bridge = getAuthBridge(ctx);
   if (!bridge) {
@@ -277,5 +345,9 @@ export default function vscodeAuthBridge(pi: AnyRecord): void {
   pi.registerCommand("refresh-auth", {
     description: "Reload Pi's model/auth registry (used by VS Code after an external auth change)",
     handler: refreshAuth,
+  });
+  pi.registerCommand("add-local-model", {
+    description: "Register a local model server (Ollama, LM Studio, or any OpenAI-compatible endpoint)",
+    handler: addLocalModel,
   });
 }

@@ -89,6 +89,21 @@ export class SessionViewStore {
     return true;
   }
 
+  // Swap the visible view to a FRESH provisional composer (no runtime id, no session file)
+  // WITHOUT waiting for the host — this is what makes "New Session" feel instant. The
+  // previous session's view is cached in `views` (its runtime keeps running in the
+  // background); the host's next `activate` re-keys this provisional view to the real
+  // runtime via promoteProvisional, the same flicker-free commit as the empty state.
+  // Returns false when the active view already IS the fresh provisional (nothing to do).
+  beginProvisionalSession(): boolean {
+    if (this.activeId === "" && !this.activeView.sessionFile && this.activeView.messages.length === 0) return false;
+    if (this.activeId && this.views.has(this.activeId)) this.views.set(this.activeId, this.activeView);
+    this.views.delete(""); // drop a stale placeholder registration, if any
+    this.activeId = "";
+    this.activeView = createView();
+    return true;
+  }
+
   // Re-key the PROVISIONAL active view (the empty-state composer, which has no runtime id and
   // no session file) to its real runtime id on the first commit. The composer view — including
   // an optimistic first message + its spinner — becomes the new session's view instead of being
@@ -109,7 +124,12 @@ export class SessionViewStore {
   // Run `fn` against a specific session's view. The active session renders normally; a
   // background session's view is updated in place WITHOUT rendering.
   withSession(id: string, fn: () => void): void {
-    if (id === this.activeId || !this.activeId) {
+    // The bootstrap adoption (`!this.activeId` claiming the view) applies ONLY to the very
+    // first session of a fresh webview (no views yet). A later "" activeId is the
+    // PROVISIONAL composer from beginProvisionalSession — background sessions still exist
+    // in `views`, and letting one of their events claim the composer would hijack it (and
+    // permanently clobber that session's cached view).
+    if (id === this.activeId || (!this.activeId && this.views.size === 0)) {
       if (!this.activeId) this.activeId = id;
       if (!this.views.has(id)) this.views.set(id, this.activeView);
       fn();
@@ -198,10 +218,14 @@ export class SessionViewStore {
   save(): void {
     if (this.saveQueued) return;
     this.saveQueued = true;
+    // 500ms debounce: scheduleRender calls save() on every streamed delta, and persist()
+    // JSON-serializes every open view — at 180ms that serialization ran ~5x/sec during a
+    // fast stream and showed up as jank. Half a second keeps the crash-restore window
+    // tight enough while cutting the steady-state cost ~3x.
     setTimeout(() => {
       this.saveQueued = false;
       this.persist();
-    }, 180);
+    }, 500);
   }
 
   private getOrCreate(id: string): AppState {
@@ -232,7 +256,6 @@ export class SessionViewStore {
     }
     view.currentAssistantId = null;
     for (const m of view.messages) {
-      if (typeof m.revealed === "number") m.revealed = m.text.length; // reveal any half-typed text
       if (m.activity) {
         if (m.activity.endedAt == null) m.activity.endedAt = m.activity.startedAt;
         // Views persisted by older builds still hold "Generated" checkpoint rows — drop them
