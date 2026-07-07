@@ -19,7 +19,6 @@ export function bubbleHasContent(message: UiMessage | undefined): boolean {
 }
 
 function finalize(message: UiMessage): void {
-  message.revealed = message.text.length;
   closeOpenThinking(message.activity); // Stop / agent_end / boundary: no orphan pulsing thinking row
   if (message.activity && !message.activity.endedAt) message.activity.endedAt = Date.now();
 }

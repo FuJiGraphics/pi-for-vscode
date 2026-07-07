@@ -48,12 +48,11 @@ test("closeExchangeBoundary: no-op on an empty current bubble (initial prompt's 
 });
 
 test("closeExchangeBoundary: detaches a content-bearing bubble so the next turn opens fresh", () => {
-  const a = msg({ id: "a", text: "테스트 완료", revealed: 0, activity: activity(2) });
+  const a = msg({ id: "a", text: "테스트 완료", activity: activity(2) });
   reset([a], "a", true);
   closeExchangeBoundary();
   assert.equal(state.currentAssistantId, null); // detached
   assert.equal(state.messages.length, 1); // bubble kept (has content)
-  assert.equal(a.revealed, "테스트 완료".length); // finalized (fully revealed)
   assert.notEqual(a.activity?.endedAt, null); // activity closed
 });
 
@@ -66,12 +65,11 @@ test("finalizeOrPrune: removes a truly empty bubble and nulls the id", () => {
 });
 
 test("finalizeOrPrune: keeps a text bubble AND its id (so a retry/compaction continuation reuses it)", () => {
-  const a = msg({ id: "a", text: "answer", revealed: 0 });
+  const a = msg({ id: "a", text: "answer" });
   reset([a], "a", true);
   finalizeOrPrune();
   assert.equal(state.messages.length, 1);
   assert.equal(state.currentAssistantId, "a"); // id kept alive
-  assert.equal(a.revealed, "answer".length);
 });
 
 test("finalizeOrPrune: keeps a tool-only bubble (steps but no text) — regression for the prune bug", () => {

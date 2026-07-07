@@ -66,7 +66,9 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
     <div id="onboarding-root" class="onboarding-root" hidden></div>
     <div id="auth-modal-root" class="auth-modal-root" hidden></div>
     <footer class="composer-wrap">
+      <div id="statusStrip" class="status-strip" hidden></div>
       <div id="composer" class="composer">
+        <div id="editBanner" class="edit-banner" hidden><span><b>Editing message</b> — sending rewinds the conversation from here</span><button id="editCancel" class="edit-banner-cancel" title="Cancel edit" aria-label="Cancel edit">×</button></div>
         <div id="attachmentTray" class="attachment-tray" hidden></div>
         <textarea id="input" placeholder="Ask Pi to work in this project"></textarea>
         <input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden />
@@ -74,8 +76,6 @@ export function getChatHtml(webview: vscode.Webview, extensionUri: vscode.Uri): 
           <button id="attachImage" class="ghost-button" title="Attach image" aria-label="Attach image">＋</button>
           <span id="actionDivider" class="action-divider" hidden></span>
           <button id="contextChip" class="context-chip" type="button" hidden></button>
-          <button class="pill-button" title="Approval mode" aria-label="Approval mode">✋ <span class="optional">Ask for approval</span>⌄</button>
-          <button id="stop" class="stop-button" disabled hidden>Stop</button>
           <span class="spacer"></span>
           <div id="usageBars" class="usage-control" hidden aria-label="Usage"></div>
           <div id="sessionStats" class="session-stats" tabindex="0" hidden aria-label="Context usage"></div>

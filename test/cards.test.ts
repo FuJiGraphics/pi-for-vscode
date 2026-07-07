@@ -197,10 +197,10 @@ test("timelineRow: a collapsed Write card shows the chevron but withholds its (l
   assert.match(open, /tl-card tl-write/);
 });
 
-test("timelineRow renders the +N/-N diff badge with per-count targets; zero sides are omitted", () => {
+test("timelineRow renders the +N/-N diff badge with final counts; zero sides are omitted", () => {
   const both = timelineRow({ id: "e1", status: "done", label: "Edit", diff: { added: 99, removed: 98 } });
-  assert.match(both, /<span class="ds-add" data-target="99">\+99<\/span>/);
-  assert.match(both, /<span class="ds-del" data-target="98">-98<\/span>/);
+  assert.match(both, /<span class="ds-add">\+99<\/span>/);
+  assert.match(both, /<span class="ds-del">-98<\/span>/);
   const addOnly = timelineRow({ id: "w1", status: "done", label: "Write", diff: { added: 45, removed: 0 } });
   assert.match(addOnly, /ds-add/);
   assert.doesNotMatch(addOnly, /ds-del/);

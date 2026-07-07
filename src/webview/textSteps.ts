@@ -26,7 +26,6 @@ export function isTextStep(step: ActivityStep): boolean {
 export function demoteAssistantText(message: UiMessage, finalText: string): void {
   const text = (finalText || message.text).trim();
   message.text = "";
-  message.revealed = 0;
   if (!text) return;
   if (!message.activity) message.activity = { startedAt: Date.now(), endedAt: null, expanded: true, steps: [] };
   const steps = message.activity.steps;

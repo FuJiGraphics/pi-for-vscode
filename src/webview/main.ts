@@ -9,13 +9,14 @@ import { handleRpcEvent, handleExtensionUiRequest, handleStderr } from "./handle
 import { handleMessageClick } from "./messageActions";
 import { initHighlighter, setHighlightNotifier, setTheme } from "./highlight";
 import { initWakeDetection } from "./wake";
-import { submitInput, autoResizeInput, updateInputState, composerIsEmpty } from "./input";
+import { submitInput, autoResizeInput, updateInputState, composerIsEmpty, isEditing, cancelEdit, initEditBanner } from "./input";
+import { startNewSession } from "./newSession";
 import { initImageAttachments } from "./attachments";
-import { closeHistory, toggleHistory, renderSessionList, initHistory } from "./history";
-import { closeModelPicker, toggleModelPicker, renderModelList, initModelPicker } from "./modelPicker";
+import { toggleHistory, renderSessionList, initHistory } from "./history";
+import { toggleModelPicker, renderModelList, initModelPicker } from "./modelPicker";
 import { setAboutInfo, setAuthState, setAuthAvailable } from "./authState";
 import { initOnboarding, onboardingConnectionChange, openModelInvalidatedModal } from "./onboarding";
-import { closeSettings, initSettings } from "./settingsPanel";
+import { initSettings } from "./settingsPanel";
 import { initUsageBars } from "./usageBars";
 import { initSessionStats } from "./sessionStatsBar";
 import { acceptActive, closeCommandMenu, initCommandMenu, invalidateCommands, isCommandMenuOpen, moveActive, openCommandMenu, renderCommandList, setCommandQuery } from "./commandMenu";
@@ -26,7 +27,7 @@ import { piMarkHtml } from "./piMark";
 import { post } from "./bridge";
 import { updateConnectionBanner } from "./connectionBanner";
 import { initScrollControls, resetScrollFollowing } from "./scroll";
-import { appEl, sendEl, stopEl, historyBtnEl, newSessionEl, modelEl, inputEl, composerEl, messagesEl } from "./dom";
+import { appEl, sendEl, historyBtnEl, newSessionEl, modelEl, inputEl, composerEl, messagesEl } from "./dom";
 import type { ExtensionToWebviewMessage } from "../protocol";
 
 // pi "boot" splash: the pi.dev block logo tetris-assembles, then fades to the chat.
@@ -57,19 +58,12 @@ sendEl.addEventListener("click", () => {
   }
   submitInput();
 });
-stopEl.addEventListener("click", () => {
-  interruptCurrentTurn();
-  setRunning(false);
-  post({ type: "abort" });
-});
 historyBtnEl.addEventListener("click", toggleHistory);
 modelEl.addEventListener("click", toggleModelPicker);
 newSessionEl.addEventListener("click", () => {
-  closeHistory();
-  closeModelPicker();
   closeCommandMenu();
-  closeSettings();
-  post({ type: "newSession" });
+  // Instant local swap to a fresh provisional composer; the host commit follows.
+  startNewSession();
 });
 // (The old single-title dblclick rename moved to sessionTabs.ts — the active tab renames.)
 inputEl.addEventListener("focus", () => composerEl.classList.add("focused"));
@@ -113,6 +107,20 @@ inputEl.addEventListener("keydown", (event) => {
       event.preventDefault();
       if (acceptActive()) return; // inserted "/name " (or ran a built-in); do not submit
     }
+  }
+  if (event.key === "Escape" && isEditing()) {
+    event.preventDefault();
+    cancelEdit();
+    return;
+  }
+  // Claude-Code-style: Escape stops the running turn (after the palette/edit handlers
+  // above have had their chance — those own Escape while open).
+  if (event.key === "Escape" && state.running) {
+    event.preventDefault();
+    interruptCurrentTurn();
+    setRunning(false);
+    post({ type: "abort" });
+    return;
   }
   if (event.key === "Enter" && !event.shiftKey) {
     if (event.isComposing || inputComposing) {
@@ -223,7 +231,9 @@ const inbound: InboundTable = {
       // the tab strip already switched optimistically and the host activation arrives later.
       invalidateCommands();
       // The context-chip attach toggle was a decision for the PREVIOUS conversation —
-      // don't let it silently append references to prompts in this one.
+      // don't let it silently append references to prompts in this one. Same for an
+      // in-progress edit-rewind: it belonged to the previous session's view.
+      cancelEdit();
       resetContextInclude();
       resetScrollFollowing();
       if (changedLocally) scheduleRender();
@@ -276,6 +286,7 @@ initSessionTabs();
 initHistory();
 initModelPicker();
 initCommandMenu();
+initEditBanner();
 initThinkingControl();
 initContextChip();
 initOnboarding();

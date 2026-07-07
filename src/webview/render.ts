@@ -10,8 +10,7 @@
 // This split is what keeps hover/toggle stable: the activity DOM is never rebuilt
 // at 60fps, so :hover state and click targets survive.
 import { state, save, isRenderSuppressed } from "./state";
-import { animateCounters } from "./counters";
-import { messagesEl, modelEl, stopEl, composerEl, sendEl, inputEl } from "./dom";
+import { messagesEl, modelEl, composerEl, sendEl, inputEl } from "./dom";
 import { renderSessionTabs } from "./sessionTabs";
 import { renderThinkingControl } from "./thinkingControl";
 import { escapeHtml, formatTime, formatDuration, roleLabel } from "./util";
@@ -21,9 +20,8 @@ import { renderSessionStats } from "./sessionStatsBar";
 import { reconcileTimeline, rowsForActivity, stepSig, timelineRowsHtml } from "./timeline";
 import { isThinkingStep, lastRunningThinkingStep, liveThinkingTail } from "./thinkingSteps";
 import { statusTaskText } from "./statusLine";
-import { thinkingLabel } from "./spinner";
 import { piMarkHtml } from "./piMark";
-import { pixelWordHtml } from "./pixelFont";
+import { paintStatusStrip } from "./statusStrip";
 import { applyLatestScroll, shouldFollowLatest } from "./scroll";
 import { hasPendingImageAttachments, imageDataUrl, imageMeta } from "./attachments";
 import type { UiImageAttachment, UiMessage } from "./types";
@@ -37,14 +35,14 @@ const renderedNodes = new Map<string, HTMLElement>();
 const renderKeys = new WeakMap<HTMLElement, string>();
 const renderOuterKeys = new WeakMap<HTMLElement, string>();
 
-// Streaming re-parse gate: the reveal animation paints every frame, but markdown-it + Shiki are
-// too heavy to re-run per frame on a growing buffer. Re-render only after the revealed text
-// advances by this many chars (or on the final, non-streaming frame), keyed per bubble element so
-// a structural rebuild (new bubble node) resets cleanly. Keeps the char-by-char reveal smooth
-// while bounding parses to ~length/STEP instead of one per frame.
-const STREAM_RENDER_STEP = 8;
-const liveRenderedLen = new WeakMap<Element, number>();
-const liveThinkLen = new WeakMap<Element, number>();
+// Streaming re-parse gate: deltas arrive faster than markdown-it + Shiki can reasonably
+// re-run on a growing buffer, so live bubble/thinking repaints are TIME-throttled (Claude
+// Code idiom: text lands as it streams, parses are bounded to ~1000/STREAM_PAINT_MS per
+// second regardless of how fast the model talks). Keyed per element so a structural rebuild
+// (new bubble node) resets cleanly; the final frame after the run ends is a full structural
+// re-render, so nothing is ever left half-painted.
+const STREAM_PAINT_MS = 90;
+const livePaint = new WeakMap<Element, { len: number; at: number }>();
 
 // Bumped when the Shiki highlighter becomes ready or the theme changes. Folded into the step
 // render key (stepsSig) so the timeline nodes — whose card HTML now differs — are rebuilt; a
@@ -72,12 +70,19 @@ function isActive(message: UiMessage): boolean {
   return state.running && message.id === state.currentAssistantId;
 }
 
-function isStreaming(message: UiMessage): boolean {
+// An assistant message with nothing to show yet: no text, no steps, not interrupted.
+// Kept in state (events keep appending to it) but skipped by the DOM loop below.
+function isVisuallyEmpty(message: UiMessage): boolean {
   return (
-    message.id === state.currentAssistantId &&
-    typeof message.revealed === "number" &&
-    message.revealed < message.text.length
+    message.role === "assistant" &&
+    !message.text &&
+    !(message.activity && message.activity.steps.length > 0) &&
+    !message.interrupted
   );
+}
+
+function isStreaming(message: UiMessage): boolean {
+  return state.running && message.id === state.currentAssistantId;
 }
 
 // ---- assistant status line (spinner / working / done), single coherent line ----
@@ -100,33 +105,16 @@ function doneLabel(message: UiMessage): string {
   return "Worked for " + formatDuration(activity?.startedAt, activity?.endedAt);
 }
 
-function statusHeaderInner(message: UiMessage, mode: "spinner" | "working" | "done"): string {
-  if (mode === "spinner") {
-    const { word, seconds } = thinkingLabel(message.createdAt);
-    return (
-      piMarkHtml("spinner") +
-      '<span class="pixel-word" data-word="' +
-      escapeHtml(word) +
-      '">' +
-      pixelWordHtml(word) +
-      '</span><span class="think-time">' +
-      (seconds > 0 ? seconds + "s" : "") +
-      "</span>" +
-      // Always present (even empty) so paintLiveMessage can update it in place per frame:
-      // the current work ("Read · cards.ts" / "Thinking… <last line>") or the step count.
-      '<span class="status-task">' + escapeHtml(statusTaskText(message)) + "</span>" +
-      // Live turn-total token/cost counter — rolled up per frame by paintLiveMessage.
-      '<span class="usage-roll"></span>'
-    );
-  }
+function statusHeaderInner(message: UiMessage, mode: "working" | "done"): string {
   const dot = mode === "working" ? '<span class="activity-working-dot"></span>' : "";
   const label = mode === "working" ? "Working" : doneLabel(message);
   if (mode === "working") {
-    // The live task chip ("Read · cards.ts" / "Thinking… <tail>") sits in its own span so
-    // paintLiveMessage can update it per frame without rebuilding the header.
+    // The task chip refreshes whenever the step set changes (the reconcile pass rewrites
+    // this header); the per-frame live task/tokens read from the status STRIP above the
+    // composer, so the in-message header stays calm.
     return (
       dot + "<span>" + escapeHtml(label) + '</span><span class="status-task">' +
-      escapeHtml(statusTaskText(message)) + '</span><span class="usage-roll"></span>'
+      escapeHtml(statusTaskText(message)) + "</span>"
     );
   }
   // Join the present fragments with one middot rather than baking a leading " · " into each.
@@ -141,11 +129,11 @@ function statusHeaderInner(message: UiMessage, mode: "spinner" | "working" | "do
   return dot + "<span>" + escapeHtml([label, statusTaskText(message)].filter(Boolean).join(SEP)) + chipHtml + "</span>";
 }
 
-function statusBlock(message: UiMessage, mode: "spinner" | "working" | "done", expanded: boolean): string {
+function statusBlock(message: UiMessage, mode: "working" | "done", expanded: boolean): string {
   const activity = message.activity;
   const steps = activity?.steps ?? [];
   const hasSteps = steps.length > 0;
-  const classes = "activity status-line" + (mode === "spinner" ? " spinner" : "") + (expanded ? " expanded" : "");
+  const classes = "activity status-line" + (expanded ? " expanded" : "");
   const inner = statusHeaderInner(message, mode);
   const chevron = hasSteps ? '<span class="activity-chevron">›</span>' : "";
   const open = hasSteps
@@ -156,17 +144,16 @@ function statusBlock(message: UiMessage, mode: "spinner" | "working" | "done", e
   return '<div class="' + classes + '" data-activity-id="' + message.id + '">' + open + inner + chevron + close + details + "</div>";
 }
 
-// Which status header (if any) the assistant message shows. Spinner mode only at the true
-// turn start (no steps yet) — once any step exists the header is "working"; otherwise each
-// toolUse demotion (text → "") would bounce the header back to the giant spinner mid-turn.
-// Folded into the OUTER render key: a mode flip forces a full rebuild, anything else can
-// reconcile rows in place.
-function statusMode(message: UiMessage): "spinner" | "working" | "done" | "none" {
+// Which status header (if any) the assistant message shows. The turn's opening beat (no
+// text, no steps yet) renders NOTHING here — the status strip above the composer carries
+// the "pi is thinking" signal, so the conversation column stays clean. Folded into the
+// OUTER render key: a mode flip forces a full rebuild, anything else can reconcile rows
+// in place.
+function statusMode(message: UiMessage): "working" | "done" | "none" {
   const active = isActive(message);
   const steps = message.activity?.steps ?? [];
-  if (active && !message.text && steps.length === 0) return "spinner";
   if (!message.activity) return "none";
-  if (active && steps.length === 0) return "none"; // streaming text with no tools → no header line
+  if (active && steps.length === 0) return "none"; // opening beat / plain streaming — the strip owns it
   return active ? "working" : "done";
 }
 
@@ -243,10 +230,8 @@ function imageAttachmentsHtml(message: UiMessage): string {
 function assistantBody(message: UiMessage): string {
   if (!message.text) return "";
   if (message.pre) return "<pre>" + escapeHtml(message.text) + "</pre>";
-  const streaming = isStreaming(message);
-  const shown = streaming ? message.text.slice(0, message.revealed) : message.text;
-  const cursor = streaming ? '<span class="stream-cursor"></span>' : "";
-  return '<div class="bubble">' + renderMarkdown(shown) + cursor + "</div>";
+  const cursor = isStreaming(message) ? '<span class="stream-cursor"></span>' : "";
+  return '<div class="bubble">' + renderMarkdown(message.text) + cursor + "</div>";
 }
 
 function messageHtml(message: UiMessage): string {
@@ -278,7 +263,7 @@ function messageHtml(message: UiMessage): string {
 // a change forces a full innerHTML rebuild. The STEPS key folds only per-step signatures —
 // when it alone changes, updateMessageNode reconciles the timeline rows in place (O(changed
 // rows), element identity preserved). Both intentionally exclude per-frame volatiles
-// (revealed, spinner glyph/word/seconds, streamed assistant text, step.thinkingText) so
+// (spinner glyph/word/seconds, streamed assistant text, step.thinkingText) so
 // streaming/thinking never rebuilds the node; the painter owns those leaves.
 function outerRenderKey(message: UiMessage): string {
   const activity = message.activity;
@@ -346,43 +331,9 @@ function updateMessageNode(node: HTMLElement, message: UiMessage): void {
   dirtyCardScopes.push(node);
 }
 
-function setText(node: HTMLElement, selector: string, text: string): void {
-  const el = node.querySelector(selector);
-  if (el && el.textContent !== text) el.textContent = text;
-}
-
-// ---- live usage roll-up (roulette-style turn counter) ----
-// The header's .usage-roll eases toward message.tokens each frame (same catch-up idiom as
-// the typewriter reveal), so every recordUsage delta rolls the counter up by exactly that
-// amount over a few frames. Cost interpolates proportionally so the pair reads consistently.
-// Keyed by message id (not element) so the value survives structural header rebuilds; the
-// done header replaces the roll with the exact usageChip total, self-correcting any residue.
-// INTENTIONAL: the counter is the TURN-cumulative total — a retry/compaction continuation
-// reuses the same bubble (finalizeOrPrune keeps its id) and keeps accumulating, so the roll
-// continuing from the previous attempt's value is correct, not stale state.
-const ROLL_CATCHUP = 0.15;
-const usageShown = new Map<string, number>();
-const reduceMotion =
-  typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-function paintUsageRoll(node: HTMLElement, message: UiMessage): void {
-  const rollEl = node.querySelector<HTMLElement>(".usage-roll");
-  if (!rollEl) return;
-  const target = message.tokens || 0;
-  let shown = usageShown.get(message.id) ?? 0;
-  if (reduceMotion || shown > target) {
-    shown = target; // reduced motion (or a stale higher value): snap, never animate down
-  } else if (shown < target) {
-    shown = Math.min(target, shown + Math.max(1, Math.ceil((target - shown) * ROLL_CATCHUP)));
-  }
-  usageShown.set(message.id, shown);
-  const cost = target > 0 && message.cost ? (message.cost * shown) / target : 0;
-  const text = shown > 0 ? tokCost(shown, cost) : "";
-  if (rollEl.textContent !== text) rollEl.textContent = text;
-  rollEl.classList.toggle("rolling", shown < target);
-}
-
-// Per-frame, in-place update of only the active message's volatile parts.
+// Per-frame, in-place update of only the active message's volatile parts. (The spinner
+// word / seconds / live token total moved to the status strip above the composer —
+// statusStrip.ts — which the animator paints in the same frame.)
 export function paintLiveMessage(): void {
   const id = state.currentAssistantId;
   if (!id) return;
@@ -392,38 +343,23 @@ export function paintLiveMessage(): void {
   if (!message) return;
   const followLatest = shouldFollowLatest();
 
-  if (state.running) {
-    // Header leaves: the spinner-mode pixel word/seconds (absent in working mode — the
-    // querySelector just misses) and the .status-task chip, which BOTH modes carry.
-    const { word, seconds } = thinkingLabel(message.createdAt);
-    const wordEl = node.querySelector(".pixel-word");
-    if (wordEl && wordEl.getAttribute("data-word") !== word) {
-      wordEl.setAttribute("data-word", word);
-      wordEl.innerHTML = pixelWordHtml(word);
-    }
-    setText(node, ".think-time", seconds > 0 ? seconds + "s" : "");
-    setText(node, ".status-task", statusTaskText(message));
-    paintUsageRoll(node, message);
-  }
   if (message.text) {
     const bubble = node.querySelector(".bubble");
     if (bubble) {
-      const streaming = isStreaming(message);
-      const shownLen = streaming ? (message.revealed as number) : message.text.length;
-      const last = liveRenderedLen.get(bubble);
-      // During streaming, batch by STREAM_RENDER_STEP; the final (non-streaming) frame always
-      // renders so the complete text — and any not-yet-shown markdown/code — lands.
-      const needsRender = streaming ? last === undefined || shownLen - last >= STREAM_RENDER_STEP : last !== shownLen;
-      if (needsRender) {
-        const shown = streaming ? message.text.slice(0, message.revealed) : message.text;
-        bubble.innerHTML = renderMarkdown(shown) + (streaming ? '<span class="stream-cursor"></span>' : "");
-        liveRenderedLen.set(bubble, shownLen);
+      const len = message.text.length;
+      const now = performance.now();
+      const last = livePaint.get(bubble);
+      // Repaint when the text grew AND the throttle window elapsed; the run's final frame
+      // (running=false → structural rebuild) always lands the complete markdown.
+      if ((!last || last.len !== len) && (!last || now - last.at >= STREAM_PAINT_MS || !state.running)) {
+        bubble.innerHTML = renderMarkdown(message.text) + (state.running ? '<span class="stream-cursor"></span>' : "");
+        livePaint.set(bubble, { len, at: now });
       }
     }
   }
 
   // Live thinking card: paint the streaming tail as plaintext (no markdown re-parse),
-  // gated by the same char step as the bubble. Independent of the branches above — a
+  // gated by the same time throttle as the bubble. Independent of the branches above — a
   // later thinking block streams after bubble text already exists.
   if (state.running) {
     const think = lastRunningThinkingStep(message.activity);
@@ -431,10 +367,11 @@ export function paintLiveMessage(): void {
       const card = node.querySelector(".tl-thinking.live .thinking-text");
       if (card) {
         const len = think.thinkingText?.length ?? 0;
-        const last = liveThinkLen.get(card);
-        if (last === undefined || len - last >= STREAM_RENDER_STEP) {
+        const now = performance.now();
+        const last = livePaint.get(card);
+        if (!last || (last.len !== len && now - last.at >= STREAM_PAINT_MS)) {
           card.textContent = liveThinkingTail(think);
-          liveThinkLen.set(card, len);
+          livePaint.set(card, { len, at: now });
           // The live card grows without structural renders, so keep its overflow fade
           // (markOverflowingCards' job) in sync here.
           const root = card.parentElement;
@@ -466,9 +403,8 @@ export function render(): void {
   // timeline; "Interrupted" is rendered inline below the cut-off turn, not as a banner.)
   renderThinkingControl();
   renderSessionStats();
+  paintStatusStrip();
   modelEl.innerHTML = '<span class="model-button-label">' + escapeHtml(state.modelLabel || "Pi") + "</span>" + MODEL_CHEVRON;
-  stopEl.disabled = true;
-  stopEl.hidden = true;
   composerEl.classList.toggle("working", !!state.running);
   refreshSendButton();
 
@@ -477,13 +413,19 @@ export function render(): void {
   if (state.messages.length === 0) {
     if (!emptyRendered) {
       // Empty-state hero (no open session, or a fresh conversation with no messages yet): the
-      // pi mark + a short greeting give the void a deliberate landing instead of a bare panel.
-      // Reuses .boot-inner (flex column + gap) and .pi-mark.boot (drops in once) so it needs no
-      // new CSS; on first launch the boot-splash overlay covers this until it settles.
+      // pi mark + a short greeting give the void a deliberate landing instead of a bare panel,
+      // and a quiet key-hint row teaches the three shortcuts that matter. Reuses .boot-inner
+      // (flex column + gap) and .pi-mark.boot (drops in once); on first launch the boot-splash
+      // overlay covers this until it settles.
       messagesEl.innerHTML =
         '<div class="empty"><div class="boot-inner">' + piMarkHtml("boot") +
         '<div><strong>Start a new conversation</strong>Type a message below to get started.</div>' +
-        '</div></div>';
+        '<div class="empty-hints">' +
+        "<span><kbd>/</kbd> commands</span>" +
+        "<span><kbd>Shift⏎</kbd> new line</span>" +
+        "<span><kbd>Esc</kbd> stop</span>" +
+        "</div>" +
+        "</div></div>";
       renderedNodes.clear();
       emptyRendered = true;
     }
@@ -498,7 +440,13 @@ export function render(): void {
   }
 
   const seen = new Set<string>();
-  state.messages.forEach((message, index) => {
+  let domIndex = 0;
+  for (const message of state.messages) {
+    // Visually empty assistant shells (the optimistic bubble before any text/steps land)
+    // stay OUT of the DOM entirely: an empty <section> would still eat the between-message
+    // margins — the exact "why is there a huge gap between my two messages" bug — and
+    // would break the `.message.user + .message.user` adjacency rule.
+    if (isVisuallyEmpty(message)) continue;
     seen.add(message.id);
     let node = renderedNodes.get(message.id);
     if (!node) {
@@ -506,9 +454,10 @@ export function render(): void {
       renderedNodes.set(message.id, node);
     }
     updateMessageNode(node, message);
-    const current = messagesEl.children[index];
+    const current = messagesEl.children[domIndex];
     if (current !== node) messagesEl.insertBefore(node, current || null);
-  });
+    domIndex++;
+  }
 
   for (const [id, node] of renderedNodes) {
     if (!seen.has(id)) {
@@ -517,11 +466,10 @@ export function render(): void {
     }
   }
 
-  // One swept scope list feeds both post-render passes: the overflow-fade check and the
-  // diff-badge roulette (counters.ts) — each is O(rewritten elements), not O(conversation).
-  const dirty = dirtyCardScopes.splice(0);
-  markOverflowingCards(dirty);
-  animateCounters(dirty);
+  // The swept scope list feeds the overflow-fade check — O(rewritten elements), not
+  // O(conversation). (Diff badges render their final "+N -N" text directly; the old
+  // roulette count-up pass is gone.)
+  markOverflowingCards(dirtyCardScopes.splice(0));
   applyLatestScroll(followLatest);
 }
 

@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 // Pinned, known-good version of @earendil-works/pi-coding-agent the extension is
 // tested against. The in-vsix bundle (resources/pi-bundle.tar.gz) ships this exact
 // version, and the managed install lands under globalStorage/pi/<PINNED>/.
-export const PINNED_PI_VERSION = "0.78.1";
+export const PINNED_PI_VERSION = "0.80.3";
 
 // Minimum Node.js the pi CLI requires (its package.json engines.node).
 const MIN_NODE_VERSION = "22.19.0";

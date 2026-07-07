@@ -303,12 +303,11 @@ export function usageTitle(usage: { input: number; output: number; cacheRead: nu
   return parts.join(" · ");
 }
 
-// Codex-style "+N -N" badge for Edit/Write rows. Each count carries data-target so the
-// post-reconcile pass (render.ts → counters.ts) can roll it up from the previous value.
+// Codex-style "+N -N" badge for Edit/Write rows, rendered with its final counts.
 function diffStatHtml(diff: DiffStats | undefined): string {
   if (!diff || (!diff.added && !diff.removed)) return "";
   const part = (cls: string, prefix: string, n: number): string =>
-    n ? '<span class="' + cls + '" data-target="' + n + '">' + prefix + n + "</span>" : "";
+    n ? '<span class="' + cls + '">' + prefix + n + "</span>" : "";
   return '<span class="diff-stat">' + part("ds-add", "+", diff.added) + part("ds-del", "-", diff.removed) + "</span>";
 }
 

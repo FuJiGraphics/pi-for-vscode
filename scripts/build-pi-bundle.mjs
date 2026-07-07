@@ -16,7 +16,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Keep in sync with PINNED_PI_VERSION in src/piResolver.ts.
-const PI_VERSION = "0.78.1";
+const PI_VERSION = "0.80.3";
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 
 // Validated pi extensions shipped IN the bundle so todos + web research work out of the

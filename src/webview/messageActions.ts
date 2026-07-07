@@ -2,13 +2,13 @@
 // image preview, clickable file references, and the code-block Copy/Insert/Apply buttons. Extracted
 // from main.ts (one responsibility: message-action handling) so the entry stays lean and new
 // actions have a home.
+import { state } from "./state";
 import { getMessage, toggleActivityStep, findStep } from "./conversation";
 import { scheduleRender } from "./render";
 import { showCardOverlay } from "./cardOverlay";
 import { showImagePreview } from "./attachments";
 import { post } from "./bridge";
-import { inputEl } from "./dom";
-import { autoResizeInput, updateInputState } from "./input";
+import { beginEdit } from "./input";
 
 // The raw source of a code block — textContent concatenates the Shiki token spans (or the escaped
 // plaintext fallback), giving back the original code without the highlight markup.
@@ -88,10 +88,16 @@ export function handleMessageClick(event: MouseEvent): void {
     return;
   }
   if (action === "edit" && message) {
-    inputEl.value = message.text || "";
-    autoResizeInput();
-    updateInputState();
-    inputEl.focus();
+    // Edit-rewind (OpenAI-style): only sensible on a settled turn — while pi is running the
+    // session file is still moving under us, so the button is inert until the run ends.
+    if (state.running || message.role !== "user") return;
+    // pi's get_fork_messages lists user entries WITH TEXT, in order — mirror that exact
+    // filter so the ordinal we send resolves to the same message host-side.
+    const ordinal = state.messages
+      .filter((m) => m.role === "user" && m.text.trim())
+      .findIndex((m) => m.id === message.id);
+    if (ordinal === -1) return;
+    beginEdit(message, ordinal);
     return;
   }
   if ((action === "ui-confirm" || action === "ui-cancel") && message && message.ui) {

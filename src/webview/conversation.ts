@@ -56,7 +56,6 @@ export function ensureAssistant(): UiMessage {
   const message = addMessage("assistant", "", {
     activity: state.running ? { startedAt: Date.now(), endedAt: null, expanded: true, steps: [] } : undefined,
   });
-  message.revealed = 0;
   state.currentAssistantId = message.id;
   return message;
 }

@@ -73,9 +73,6 @@ export interface UiMessage {
   attachments?: UiImageAttachment[];
   activity?: Activity;
   ui?: UiPrompt;
-  /** Characters of `text` revealed so far for the typewriter effect. Only set
-   * on the live-streaming assistant message; undefined means "show in full". */
-  revealed?: number;
   /** Token usage for this turn, summed across its API calls (from pi's message.usage). */
   tokens?: number;
   /** Cost in USD for this turn, summed across its API calls. */
