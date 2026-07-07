@@ -134,8 +134,8 @@
         },
         "pi-for-vscode.openOnStartup": {
           "type": "boolean",
-          "default": true,
-          "description": "Open the Pi webview in the Secondary Side Bar when VS Code starts."
+          "default": false,
+          "description": "Force-open the Pi webview when VS Code starts. Off by default: VS Code restores whatever panel you last had open (Pi included), so forcing Pi steals focus from other views."
         },
         "pi-for-vscode.brokerIdleTimeoutMinutes": {
           "type": "number",
