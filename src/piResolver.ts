@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 // Pinned, known-good version of @earendil-works/pi-coding-agent the extension is
 // tested against. The in-vsix bundle (resources/pi-bundle.tar.gz) ships this exact
 // version, and the managed install lands under globalStorage/pi/<PINNED>/.
-export const PINNED_PI_VERSION = "0.80.3";
+export const PINNED_PI_VERSION = "0.80.6";
 
 // Minimum Node.js the pi CLI requires (its package.json engines.node).
 const MIN_NODE_VERSION = "22.19.0";
@@ -176,17 +176,21 @@ export function detectPiVersion(runtime: PiRuntime): Promise<string | undefined>
   const args = runtime.launchKind === "node-script" ? [runtime.piEntry, "--version"] : ["--version"];
   const env = runtime.runAsNode ? { ...process.env, ELECTRON_RUN_AS_NODE: "1" } : process.env;
   const probe = new Promise<string | undefined>((resolve) => {
-    execFile(command, args, { timeout: 5000, env }, (error, stdout) => {
+    execFile(command, args, { timeout: 5000, env }, (error, stdout, stderr) => {
       if (error) {
         resolve(undefined);
         return;
       }
-      const match = /\d+\.\d+\.\d+/.exec(String(stdout));
-      resolve(match ? match[0] : undefined);
+      resolve(parsePiVersion(`${stdout}\n${stderr}`));
     });
   });
   piVersionCache.set(runtime.piEntry, probe);
   return probe;
+}
+
+export function parsePiVersion(output: string): string | undefined {
+  const match = /\bv?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)\b/.exec(output);
+  return match ? match[1] : undefined;
 }
 
 function getNodeVersion(nodePath: string): Promise<string | undefined> {
